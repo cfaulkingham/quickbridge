@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'">
+  <title>Send to desktop</title>
+  <style>
+    :root {
+      --bg: #111111;
+      --fg: #f4f1ea;
+      --dim: #9a958a;
+      --card: #1c1c1c;
+      --line: rgba(244, 241, 234, 0.12);
+      --accent: #f4f1ea;
+      --ok: #8fbf8a;
+      --bad: #e07a7a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    body {
+      padding: 28px 20px 48px;
+      padding-bottom: max(48px, env(safe-area-inset-bottom));
+    }
+    main {
+      max-width: 28rem;
+      margin: 0 auto;
+    }
+    .kicker {
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--dim);
+      margin-bottom: 8px;
+    }
+    h1 {
+      font-size: 1.7rem;
+      line-height: 1.15;
+      margin: 0 0 8px;
+    }
+    .lede {
+      color: var(--dim);
+      margin: 0 0 24px;
+    }
+    .zone {
+      background: var(--card);
+      border: 1px dashed var(--line);
+      border-radius: 16px;
+      padding: 28px 18px;
+      text-align: center;
+    }
+    .zone strong { display: block; font-size: 1.05rem; margin-bottom: 6px; }
+    .zone p { margin: 0; color: var(--dim); font-size: 0.92rem; }
+    .actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    button, .btn {
+      appearance: none;
+      display: block;
+      width: 100%;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--fg);
+      font: inherit;
+      font-weight: 650;
+      padding: 14px 16px;
+      border-radius: 12px;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+    }
+    button.primary, .btn.primary {
+      background: var(--accent);
+      color: #111;
+      border-color: var(--accent);
+    }
+    button:disabled { opacity: 0.45; cursor: default; }
+    input[type=file] { display: none; }
+    .limit { margin-top: 14px; color: var(--dim); font-size: 0.82rem; text-align: center; }
+    .list { list-style: none; padding: 0; margin: 22px 0 0; }
+    .list li {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .list .meta { color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .list .ok { color: var(--ok); }
+    .list .bad { color: var(--bad); }
+    .progress {
+      display: none;
+      height: 4px;
+      background: var(--line);
+      border-radius: 99px;
+      margin-top: 16px;
+      overflow: hidden;
+    }
+    .progress > span {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: var(--accent);
+    }
+  </style>
+</head>
+<body data-max-bytes="{{MAX_BYTES}}">
+  <main>
+    <div class="kicker">Quick Bridge</div>
+    <h1>Send a file to this computer</h1>
+    <p class="lede">Photos, PDFs, and documents land in the desktop Downloads folder.</p>
+    <div class="zone" id="zone">
+      <strong>Choose files from this phone</strong>
+      <p>Camera, files, or the share sheet all work.</p>
+      <div class="actions">
+        <button class="primary" id="pick" type="button">Choose files</button>
+        <button id="camera" type="button">Take a photo</button>
+      </div>
+      <div class="progress" id="bar"><span></span></div>
+    </div>
+    <p class="limit">Up to {{MAX_LABEL}} per file. This link only works while the desktop panel is live.</p>
+    <ul class="list" id="list"></ul>
+  </main>
+  <input id="file-input" type="file" multiple>
+  <input id="camera-input" type="file" accept="image/*" capture="environment">
+  <script>
+    const maxBytes = Number(document.body.dataset.maxBytes || 0);
+    const list = document.getElementById("list");
+    const bar = document.getElementById("bar");
+    const fill = bar.querySelector("span");
+    const pick = document.getElementById("pick");
+    const camera = document.getElementById("camera");
+    const fileInput = document.getElementById("file-input");
+    const cameraInput = document.getElementById("camera-input");
+
+    function formatBytes(n) {
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+      return (n / (1024 * 1024)).toFixed(1) + " MB";
+    }
+
+    function addRow(name, meta, cls) {
+      const li = document.createElement("li");
+      li.innerHTML = '<span class="name"></span><span class="meta"></span>';
+      li.querySelector(".name").textContent = name;
+      const m = li.querySelector(".meta");
+      m.textContent = meta;
+      if (cls) m.className = "meta " + cls;
+      list.prepend(li);
+      return li;
+    }
+
+    async function sendFile(file) {
+      if (maxBytes && file.size > maxBytes) {
+        addRow(file.name, "too large", "bad");
+        return;
+      }
+      const row = addRow(file.name, "sending…");
+      bar.style.display = "block";
+      fill.style.width = "0%";
+      try {
+        const body = new FormData();
+        body.append("file", file, file.name);
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "upload");
+          xhr.upload.onprogress = (ev) => {
+            if (!ev.lengthComputable) return;
+            fill.style.width = Math.round((ev.loaded / ev.total) * 100) + "%";
+          };
+          xhr.onload = () => {
+            let data = {};
+            try { data = JSON.parse(xhr.responseText || "{}"); } catch (e) {}
+            if (xhr.status >= 200 && xhr.status < 300 && data.ok) resolve(data);
+            else reject(new Error(data.error || ("HTTP " + xhr.status)));
+          };
+          xhr.onerror = () => reject(new Error("network error"));
+          xhr.send(body);
+        });
+        row.querySelector(".meta").textContent = formatBytes(file.size);
+        row.querySelector(".meta").className = "meta ok";
+      } catch (err) {
+        row.querySelector(".meta").textContent = err.message || "failed";
+        row.querySelector(".meta").className = "meta bad";
+      } finally {
+        fill.style.width = "100%";
+        setTimeout(() => { bar.style.display = "none"; fill.style.width = "0%"; }, 400);
+      }
+    }
+
+    async function sendList(files) {
+      pick.disabled = true;
+      camera.disabled = true;
+      for (const file of files) await sendFile(file);
+      pick.disabled = false;
+      camera.disabled = false;
+    }
+
+    pick.addEventListener("click", () => fileInput.click());
+    camera.addEventListener("click", () => cameraInput.click());
+    fileInput.addEventListener("change", () => {
+      sendList(Array.from(fileInput.files || []));
+      fileInput.value = "";
+    });
+    cameraInput.addEventListener("change", () => {
+      sendList(Array.from(cameraInput.files || []));
+      cameraInput.value = "";
+    });
+
+    const zone = document.getElementById("zone");
+    zone.addEventListener("dragover", (ev) => { ev.preventDefault(); });
+    zone.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      sendList(Array.from(ev.dataTransfer.files || []));
+    });
+  </script>
+</body>
+</html>

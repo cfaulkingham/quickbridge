@@ -1,0 +1,187 @@
+#!/usr/bin/bash
+# Build (if needed) and exec the Quick Bridge helper. Cargo artifacts stay in
+# ~/.cache so writes never hot-reload the Omarchy plugin folder.
+set -euo pipefail
+umask 077
+export PATH="/usr/bin:${HOME:+$HOME/.cargo/bin}"
+export CARGO_TERM_COLOR=never
+export CARGO_TERM_PROGRESS_BAR=off
+
+# Session leader (started via setsid) — tear down cargo/rustc on TERM.
+trap 'trap - TERM; kill -- -$$ 2>/dev/null || true; exit 143' TERM
+
+emit() {
+  # External printf so libc flushes on exit. Bash's builtin printf stays
+  # fully buffered when stdout is the widget pipe, so compile status never
+  # appeared until cargo finished.
+  /usr/bin/printf '%s\n' "$1"
+}
+
+json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/ }
+  s=${s//$'\r'/}
+  s=${s//$'\t'/ }
+  printf '%s' "$s"
+}
+
+emit_status() {
+  local state=$1
+  local message
+  message=$(json_escape "$2")
+  local progress=$3
+  emit "{\"event\":\"status\",\"state\":\"$state\",\"message\":\"$message\",\"progress\":$progress}"
+}
+
+die() {
+  local msg
+  msg=$(json_escape "$1")
+  emit "{\"event\":\"error\",\"message\":\"$msg\"}"
+  exit 1
+}
+
+# Last cargo phase line from the capped build log. Empty until cargo prints.
+last_build_line() {
+  local log=$1
+  [[ -f $log ]] || return 0
+  /usr/bin/grep -aE '^\s*(Compiling|Downloading|Downloaded|Fetching|Updating|Checking|Finished) ' -- "$log" 2>/dev/null \
+    | /usr/bin/tail -n 1 \
+    | /usr/bin/tr -cd '\40-\176' \
+    | /usr/bin/head -c 100
+}
+
+: "${HOME:?}"
+
+ROOT="$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")"
+ROOT="$(cd -- "$ROOT/.." && /usr/bin/pwd)"
+if [[ -n ${XDG_CACHE_HOME-} ]]; then
+  CACHE="$XDG_CACHE_HOME/quickbridge"
+else
+  CACHE="$HOME/.cache/quickbridge"
+fi
+BIN="$CACHE/quickbridge"
+MANIFEST="$ROOT/Cargo.toml"
+LOCK="$ROOT/Cargo.lock"
+
+[[ -f "$MANIFEST" && -f "$LOCK" ]] || die "plugin source is missing Cargo.toml or Cargo.lock"
+
+private_dir() {
+  local dir=$1
+  /usr/bin/mkdir -p -m 700 -- "$dir" || die "could not create cache directory"
+  if [[ -L $dir ]]; then
+    die "cache path is a symlink"
+  fi
+  if [[ ! -d $dir ]]; then
+    die "cache path is not a directory"
+  fi
+  local owner
+  owner=$(/usr/bin/stat -c %u -- "$dir") || die "stat cache"
+  [[ $owner == "$(/usr/bin/id -u)" ]] || die "cache directory is not yours"
+  /usr/bin/chmod 700 -- "$dir" || die "could not lock down cache directory"
+  # Drop planted FIFOs/symlinks/devices at the top level. Leave regular
+  # files and the cargo target directory.
+  /usr/bin/find "$dir" -mindepth 1 -maxdepth 1 \( -type l -o -type p -o -type s -o -type b -o -type c \) \
+    -exec /usr/bin/rm -rf -- {} + 2>/dev/null || true
+}
+
+bin_ok() {
+  [[ -f "$BIN" && ! -L "$BIN" && -x "$BIN" ]] || return 1
+  local owner mode
+  owner=$(/usr/bin/stat -c %u -- "$BIN") || return 1
+  mode=$(/usr/bin/stat -c %a -- "$BIN") || return 1
+  [[ $owner == "$(/usr/bin/id -u)" && $mode == 700 ]]
+}
+
+src_newer_than_bin() {
+  bin_ok || return 0
+  [[ -f "$MANIFEST" && "$MANIFEST" -nt "$BIN" ]] && return 0
+  [[ -f "$LOCK" && "$LOCK" -nt "$BIN" ]] && return 0
+  local f count=0
+  while IFS= read -r -d '' f; do
+    count=$((count + 1))
+    (( count > 64 )) && return 0
+    [[ "$f" -nt "$BIN" ]] && return 0
+  done < <(/usr/bin/find "$ROOT/src" -maxdepth 1 -type f -print0 2>/dev/null)
+  return 1
+}
+
+install_bin() {
+  local built=$1
+  local tmp
+  tmp=$(/usr/bin/mktemp -p "$CACHE" .quickbridge.XXXXXXXXXX) || die "mktemp"
+  trap 'rm -f -- "$tmp"; trap - RETURN' RETURN
+  /usr/bin/cat -- "$built" >"$tmp" || die "copy helper"
+  /usr/bin/chmod 700 -- "$tmp" || die "chmod helper"
+  /usr/bin/mv -f -T -- "$tmp" "$BIN" || die "install helper"
+  trap - RETURN
+}
+
+if src_newer_than_bin; then
+  emit_status building "Building helper…" 0.08
+  CARGO=""
+  if [[ -x /usr/bin/cargo ]]; then
+    CARGO=/usr/bin/cargo
+  elif [[ -x "$HOME/.cargo/bin/cargo" ]]; then
+    CARGO="$HOME/.cargo/bin/cargo"
+  else
+    die "Rust cargo is required. Install rustup, then try again."
+  fi
+  private_dir "$CACHE"
+  export CARGO_TARGET_DIR="$CACHE/target"
+  BUILD_LOG=$(/usr/bin/mktemp -p "$CACHE" .build.XXXXXXXXXX) || die "mktemp"
+  set +e
+  (
+    set -o pipefail
+    /usr/bin/timeout -k 2 600 "$CARGO" build --locked --release --manifest-path "$MANIFEST" \
+      2>&1 | /usr/bin/head -c 262145 >"$BUILD_LOG"
+    exit "${PIPESTATUS[0]}"
+  ) &
+  BUILD_PID=$!
+  prog_c=80
+  tick=0
+  while /usr/bin/kill -0 "$BUILD_PID" 2>/dev/null; do
+    line=$(last_build_line "$BUILD_LOG")
+    line=${line#"${line%%[![:space:]]*}"}
+    if [[ -n $line ]]; then
+      msg="Building helper — $line"
+    else
+      case $((tick % 3)) in
+        0) msg="Building helper…" ;;
+        1) msg="Building helper — first run can take several minutes…" ;;
+        2) msg="Building helper — still compiling…" ;;
+      esac
+    fi
+    printf -v prog '0.%03d' "$prog_c"
+    emit_status building "$msg" "$prog"
+    tick=$((tick + 1))
+    prog_c=$((prog_c + 12))
+    (( prog_c > 880 )) && prog_c=880
+    /usr/bin/sleep 0.75
+  done
+  wait "$BUILD_PID"
+  CARGO_RC=$?
+  set -e
+  /usr/bin/rm -f -- "$BUILD_LOG"
+  built="$CARGO_TARGET_DIR/release/quickbridge"
+  if [[ ! -x $built || -L $built ]]; then
+    die "Failed to compile the Quick Bridge helper"
+  fi
+  # 0 = success; 141 = SIGPIPE after we capped cargo's log. Timeout is 124.
+  if [[ $CARGO_RC -eq 124 || $CARGO_RC -eq 137 ]]; then
+    die "Failed to compile the Quick Bridge helper"
+  fi
+  if [[ $CARGO_RC -ne 0 && $CARGO_RC -ne 141 ]]; then
+    die "Failed to compile the Quick Bridge helper"
+  fi
+  emit_status building "Building helper — compiled, starting…" 1
+  install_bin "$built"
+fi
+
+bin_ok || die "helper binary is missing or not a regular file"
+if [[ -L "$BIN" ]]; then
+  die "helper binary is a symlink"
+fi
+unset LD_PRELOAD _STDBUF_O _STDBUF_E _STDBUF_I
+exec "$BIN" "$@"

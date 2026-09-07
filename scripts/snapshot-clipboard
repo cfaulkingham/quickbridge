@@ -1,0 +1,105 @@
+#!/usr/bin/bash
+# Snapshot the Wayland clipboard into XDG_RUNTIME_DIR and print a JSON
+# event the panel can parse. Never puts clipboard bytes in argv.
+set -euo pipefail
+umask 077
+export PATH=/usr/bin
+
+emit() {
+  printf '%s\n' "$1"
+}
+
+die() {
+  local msg=${1//\\/\\\\}
+  msg=${msg//\"/\\\"}
+  emit "{\"event\":\"error\",\"message\":\"$msg\"}"
+  exit 1
+}
+
+json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  printf '%s' "$s"
+}
+
+: "${XDG_RUNTIME_DIR:?}"
+DIR="$XDG_RUNTIME_DIR/quickbridge"
+/usr/bin/mkdir -p -m 700 -- "$DIR" || die "could not create clipboard cache"
+if [[ -L $DIR ]]; then
+  die "clipboard cache is a symlink"
+fi
+if [[ ! -d $DIR ]]; then
+  die "clipboard cache is not a directory"
+fi
+owner=$(/usr/bin/stat -c %u -- "$DIR") || die "stat clipboard cache"
+[[ $owner == "$(/usr/bin/id -u)" ]] || die "clipboard cache is not yours"
+/usr/bin/chmod 700 -- "$DIR" || die "could not lock down clipboard cache"
+/usr/bin/find "$DIR" -mindepth 1 -maxdepth 1 ! -type f -exec /usr/bin/rm -rf -- {} + 2>/dev/null || true
+/usr/bin/find "$DIR" -mindepth 1 -maxdepth 1 -type f -exec /usr/bin/chmod 600 -- {} + 2>/dev/null || true
+
+tmp=$(/usr/bin/mktemp -p "$DIR" clip.XXXXXXXXXX) || die "mktemp"
+trap 'rm -f -- "$tmp"' EXIT
+
+set +e
+types=$(/usr/bin/timeout -k 1 2 /usr/bin/wl-paste --list-types 2>/dev/null | /usr/bin/head -c 4097)
+set -e
+if [[ ${#types} -gt 4096 ]]; then
+  die "clipboard type list too large"
+fi
+paste_args=( )
+name="clipboard.bin"
+if [[ $types == *image/png* ]]; then
+  paste_args=(--type image/png)
+  name="clipboard.png"
+elif [[ $types == *image/jpeg* ]]; then
+  paste_args=(--type image/jpeg)
+  name="clipboard.jpg"
+elif [[ $types == *image/webp* ]]; then
+  paste_args=(--type image/webp)
+  name="clipboard.webp"
+else
+  paste_args=(--type text/plain)
+  name="clipboard.txt"
+fi
+
+# 32 MiB cap: 512 * 64KiB
+if ! /usr/bin/timeout -k 1 2 /usr/bin/wl-paste "${paste_args[@]}" 2>/dev/null \
+    | /usr/bin/dd bs=65536 count=512 of="$tmp" status=none; then
+  die "could not read the clipboard"
+fi
+
+bytes=$(/usr/bin/wc -c <"$tmp")
+bytes=${bytes// /}
+[[ $bytes -gt 0 ]] || die "clipboard is empty"
+[[ $bytes -lt 33554432 ]] || die "clipboard is too large"
+
+mime=$(/usr/bin/file -b --mime-type -- "$tmp" 2>/dev/null | /usr/bin/head -c 129)
+mime=${mime:-application/octet-stream}
+if [[ ${#mime} -gt 128 ]]; then
+  mime=application/octet-stream
+fi
+case $mime in
+  image/png) name="clipboard.png" ;;
+  image/jpeg) name="clipboard.jpg" ;;
+  image/webp) name="clipboard.webp" ;;
+  image/gif) name="clipboard.gif" ;;
+  text/*) name="clipboard.txt" ;;
+  *)
+    if [[ $name == clipboard.txt ]]; then
+      name="clipboard.bin"
+    fi
+    ;;
+esac
+
+final="$DIR/${name%.*}-$$-${RANDOM}.${name##*.}"
+/usr/bin/mv -f -T -- "$tmp" "$final" || die "could not store clipboard"
+trap - EXIT
+
+kind="file"
+case $mime in
+  image/*) kind="image" ;;
+  text/*) kind="text" ;;
+esac
+
+emit "{\"event\":\"snapshot\",\"path\":\"$(json_escape "$final")\",\"name\":\"$(json_escape "$name")\",\"size\":$bytes,\"kind\":\"$kind\"}"

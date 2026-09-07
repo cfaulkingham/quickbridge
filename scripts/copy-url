@@ -1,0 +1,16 @@
+#!/usr/bin/bash
+# Copy at most 4KiB from stdin onto the clipboard. The payload never
+# appears in argv. Stops after EOF or two seconds so a stuck stdin
+# cannot hang the widget.
+set -euo pipefail
+umask 077
+export PATH=/usr/bin
+
+: "${XDG_RUNTIME_DIR:?}"
+tmp=$(/usr/bin/mktemp -p "$XDG_RUNTIME_DIR" .quickbridge-clip.XXXXXXXXXX) || exit 1
+trap 'rm -f -- "$tmp"' EXIT
+/usr/bin/timeout -k 1 2 /usr/bin/dd bs=4096 count=1 of="$tmp" status=none || true
+bytes=$(/usr/bin/wc -c <"$tmp")
+bytes=${bytes// /}
+[[ $bytes -gt 0 && $bytes -le 4096 ]] || exit 1
+exec /usr/bin/wl-copy -- <"$tmp"

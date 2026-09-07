@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.cfaulkingham.quickbridge",
+  "name": "Quick Bridge",
+  "version": "1.0.0",
+  "author": "Colin Faulkingham",
+  "license": "MIT",
+  "description": "QR-code bridge to upload from a phone, share a file or clipboard, or proxy a local HTTP port over a Cloudflare quick tunnel.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "keywords": [
+    "upload",
+    "download",
+    "proxy",
+    "qr",
+    "phone",
+    "clipboard",
+    "cloudflare",
+    "tunnel",
+    "files",
+    "documents",
+    "password",
+    "pin"
+  ],
+  "barWidget": {
+    "displayName": "Quick Bridge",
+    "description": "QR code bridge for phone uploads, file sharing, and local HTTP proxy",
+    "category": "Tools",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "destDir": "",
+      "maxMb": 100,
+      "idleMinutes": 15,
+      "stopAfter": false,
+      "requirePassword": false
+    },
+    "schema": [
+      {
+        "key": "destDir",
+        "type": "path",
+        "label": "Save folder",
+        "defaultValue": "",
+        "description": "Where phone uploads land. Empty uses ~/Downloads/Quick Bridge."
+      },
+      {
+        "key": "maxMb",
+        "type": "integer",
+        "label": "Max file size (MB)",
+        "min": 1,
+        "max": 2048,
+        "step": 1,
+        "defaultValue": 100
+      },
+      {
+        "key": "idleMinutes",
+        "type": "integer",
+        "label": "Idle timeout (minutes)",
+        "min": 1,
+        "max": 120,
+        "step": 1,
+        "defaultValue": 15
+      },
+      {
+        "key": "stopAfter",
+        "type": "boolean",
+        "label": "Stop after transfer",
+        "defaultValue": false,
+        "description": "Default for the panel toggle. When on, the tunnel stops after the first upload or download."
+      },
+      {
+        "key": "requirePassword",
+        "type": "boolean",
+        "label": "Require password",
+        "defaultValue": false,
+        "description": "Default for upload/download. Proxy always requires a 6-digit code shown on the desktop. The code is not in the QR or the link."
+      }
+    ]
+  }
+}
