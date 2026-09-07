@@ -31,6 +31,7 @@ Panel {
   property int qrSize: 0
   property var uploads: []
   property var downloads: []
+  readonly property bool hasHistory: root.uploads.length > 0 || root.downloads.length > 0
   property var ports: []
   property string portsMessage: ""
   property string stdoutBuf: ""
@@ -543,6 +544,12 @@ Panel {
     Util.execArgv(["/usr/bin/xdg-open", path])
   }
 
+  function clearHistory() {
+    if (!root.hasHistory) return
+    root.uploads = []
+    root.downloads = []
+  }
+
   function pickFile() {
     if (root.busy || pickProc.running) return
     root.pickerBuf = ""
@@ -882,6 +889,7 @@ Panel {
       anchors.fill: parent
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
+      onDeleteRequested: root.clearHistory()
       onTextKey: function(t) {
         if (t === "c" || t === "C") root.copyUrl()
         else if (t === "o" || t === "O") root.openDest()
@@ -1243,8 +1251,49 @@ Panel {
         }
 
         PanelSeparator {
-          visible: root.uploads.length > 0 || root.downloads.length > 0
+          visible: root.hasHistory
           foreground: root.contentForeground
+        }
+
+        Item {
+          visible: root.hasHistory
+          width: parent.width
+          implicitHeight: Math.max(recentLabel.implicitHeight, clearHint.implicitHeight)
+
+          PanelSectionHeader {
+            id: recentLabel
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Recent"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Text {
+            id: clearHint
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: "x  Clear"
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+
+            MouseArea {
+              id: clearHintMouse
+              anchors.fill: parent
+              anchors.margins: -Style.space(8)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.clearHistory()
+            }
+
+            PanelToolTip {
+              visible: clearHintMouse.containsMouse
+              text: "Files on disk are not deleted."
+              fontFamily: root.contentFontFamily
+            }
+          }
         }
 
         Repeater {

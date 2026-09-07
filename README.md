@@ -74,8 +74,9 @@ plugin source has not changed.
 - **Proxy** — **Refresh ports**, then tap a listening HTTP port. The QR is
   the public origin of that service (no extra path prefix).
 - `c` copies the link, `o` opens the upload folder, `u`/`d`/`p` switch
-  modes, `f` picks a file, `b` shares the clipboard, `r` refreshes ports.
-  Escape closes the panel.
+  modes, `f` picks a file, `b` shares the clipboard, `r` refreshes ports,
+  `x` clears the recent-files list (files on disk stay). Escape closes
+  the panel.
 - Incoming uploads and completed downloads raise a desktop notification.
 - An idle session stops itself after 15 minutes without activity
   (configurable). A live session also has a hard wall-clock limit of twice
