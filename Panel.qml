@@ -298,6 +298,13 @@ Panel {
     root.lastStderr = ""
   }
 
+  function forgetSessionSecrets() {
+    root.sessionPassword = ""
+    root.url = ""
+    root.qrRows = []
+    root.qrSize = 0
+  }
+
   function killHelper() {
     if (!serverProc.running) return
     serverProc.signal(15)
@@ -312,14 +319,11 @@ Panel {
     }
     root.lastError = ""
     root.ready = false
-    root.url = ""
     root.location = ""
     root.statusState = "starting"
     root.statusMessage = "Starting…"
     root.progress = 0.06
-    root.qrRows = []
-    root.qrSize = 0
-    root.sessionPassword = ""
+    root.forgetSessionSecrets()
     root.expectedStop = false
     root.resetIo()
     serverProc.command = helperCommand()
@@ -361,7 +365,7 @@ Panel {
     root.statusMessage = ""
     root.progress = 0
     root.lastError = ""
-    root.sessionPassword = ""
+    root.forgetSessionSecrets()
     if (!serverProc.running) return
     root.expectedStop = true
     root.killHelper()
@@ -429,6 +433,7 @@ Panel {
         root.desiredOn = false
         root.ready = false
         root.progress = 0
+        root.forgetSessionSecrets()
       }
       return
     }
@@ -659,11 +664,13 @@ Panel {
         || root.statusState === "stop-after"
       root.expectedStop = false
       root.ready = false
+      root.forgetSessionSecrets()
       if (!wasExpected && root.desiredOn && exitCode !== 0 && root.lastError === "") {
         root.lastError = root.lastStderr !== ""
           ? root.lastStderr
           : "Quick Bridge stopped unexpectedly"
       }
+      root.resetIo()
       // Helper is gone: the switch and bar icon follow, even if the panel
       // is closed. Only an explicit start turns it back on.
       root.desiredOn = false
@@ -868,6 +875,8 @@ Panel {
   Component.onDestruction: {
     root.desiredOn = false
     root.expectedStop = true
+    root.forgetSessionSecrets()
+    root.resetIo()
     if (serverProc.running) {
       serverProc.signal(15)
       serverProc.signal(9)
