@@ -15,8 +15,8 @@ clap = { version = "4", features = ["derive"] }
 cloudflare-quick-tunnel = "0.3"
 dirs = "6"
 http-body-util = "0.1"
-hyper = { version = "1", features = ["http1", "client"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+hyper = { version = "1", features = ["http1", "client", "server"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio", "service"] }
 libc = "0.2"
 qrcode = { version = "0.14", default-features = false }
 serde = { version = "1", features = ["derive"] }

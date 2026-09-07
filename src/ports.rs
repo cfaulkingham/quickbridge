@@ -267,7 +267,9 @@ fn socket_owners() -> HashMap<u64, String> {
 fn process_uid(dir: &Path) -> Option<u32> {
     let status = read_capped(dir.join("status").to_str()?, 8192)?;
     for line in status.lines() {
-        let rest = line.strip_prefix("Uid:")?;
+        let Some(rest) = line.strip_prefix("Uid:") else {
+            continue;
+        };
         let first = rest.split_whitespace().next()?;
         return first.parse().ok();
     }
@@ -293,13 +295,12 @@ async fn probe_http(ip: IpAddr, port: u16) -> Option<String> {
         IpAddr::V6(_) => format!("[::1]:{port}"),
         IpAddr::V4(_) => format!("127.0.0.1:{port}"),
     };
-    match tokio::time::timeout(PROBE_TIMEOUT, probe_once(addr, &host)).await {
-        Ok(v) => v,
-        Err(_) => None,
-    }
+    tokio::time::timeout(PROBE_TIMEOUT, probe_once(addr, &host))
+        .await
+        .unwrap_or_default()
 }
 
-pub async fn confirm_local_http(port: u16) -> Result<()> {
+pub async fn confirm_local_http(port: u16) -> Result<SocketAddr> {
     if port == 0 {
         anyhow::bail!("invalid port");
     }
@@ -307,13 +308,13 @@ pub async fn confirm_local_http(port: u16) -> Result<()> {
         .await
         .is_some()
     {
-        return Ok(());
+        return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     }
     if probe_http(IpAddr::V6(Ipv6Addr::LOCALHOST), port)
         .await
         .is_some()
     {
-        return Ok(());
+        return Ok(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port));
     }
     anyhow::bail!("nothing HTTP is listening on localhost:{port}")
 }
@@ -384,6 +385,17 @@ pub fn extract_title(html: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_owner_is_read_after_other_status_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("status"),
+            "Name:\tnode\nState:\tS (sleeping)\nUid:\t1000\t1000\t1000\t1000\n",
+        )
+        .unwrap();
+        assert_eq!(process_uid(dir.path()), Some(1000));
+    }
 
     #[test]
     fn parses_ipv4_loopback_listen() {

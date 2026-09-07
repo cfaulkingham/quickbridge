@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,6 +15,7 @@ use hyper_util::rt::TokioExecutor;
 use tokio::sync::Semaphore;
 
 use crate::gate::{self, Gate, UnlockForm};
+use crate::transfer::TransferBody;
 
 const UNLOCK_PATH: &str = "/__quickbridge/unlock";
 /// Phone → helper request and helper → backend response ceiling.
@@ -25,7 +27,7 @@ pub type HttpClient = Client<HttpConnector, Body>;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub port: u16,
+    pub target: SocketAddr,
     pub client: HttpClient,
     pub last_activity: Arc<Mutex<Instant>>,
     pub tunneled: bool,
@@ -130,12 +132,30 @@ async fn forward(State(state): State<AppState>, req: Request) -> Response {
             .into_response();
     }
 
+    if req
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .is_some_and(|n| n > MAX_PROXY_BYTES as u64)
+    {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let strip_pin = state.gate.is_pin_authorization(req.headers());
+    let deadline = tokio::time::Instant::now() + PROXY_REQUEST_TIMEOUT;
+    if let Some(connection) = req
+        .extensions()
+        .get::<crate::transfer::ConnectionDeadline>()
+    {
+        connection.arm(deadline);
+    }
+
     let path_and_query = req
         .uri()
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".into());
-    let target = format!("http://127.0.0.1:{}{}", state.port, path_and_query);
+    let target = format!("http://{}{}", state.target, path_and_query);
     let uri: Uri = match target.parse() {
         Ok(u) => u,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
@@ -158,13 +178,10 @@ async fn forward(State(state): State<AppState>, req: Request) -> Response {
         if is_hop_by_hop(name) || name == header::HOST {
             continue;
         }
-        if matches!(
-            name.as_str(),
-            "x-forwarded-for" | "x-real-ip" | "forwarded"
-        ) {
+        if matches!(name.as_str(), "x-forwarded-for" | "x-real-ip" | "forwarded") {
             continue;
         }
-        if state.gate.enabled() && name == header::AUTHORIZATION {
+        if strip_pin && name == header::AUTHORIZATION {
             continue;
         }
         if name == header::COOKIE {
@@ -175,7 +192,7 @@ async fn forward(State(state): State<AppState>, req: Request) -> Response {
         }
         builder = builder.header(name, value);
     }
-    let host = format!("127.0.0.1:{}", state.port);
+    let host = state.target.to_string();
     builder = builder.header(header::HOST, &host);
     if !forwarded_host.is_empty() {
         builder = builder.header("x-forwarded-host", forwarded_host);
@@ -185,22 +202,22 @@ async fn forward(State(state): State<AppState>, req: Request) -> Response {
         if state.tunneled { "https" } else { "http" },
     );
 
-    let request = match builder.body(body) {
+    let request = match builder.body(Body::new(Limited::new(body, MAX_PROXY_BYTES))) {
         Ok(r) => r,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
 
-    let Ok(_permit) = state.limit.clone().try_acquire_owned() else {
+    let Ok(permit) = state.limit.clone().try_acquire_owned() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
 
     state.touch();
-    match tokio::time::timeout(PROXY_REQUEST_TIMEOUT, state.client.request(request)).await {
+    match tokio::time::timeout_at(deadline, state.client.request(request)).await {
         Ok(Ok(resp)) => {
             let (mut parts, incoming) = resp.into_parts();
             if let Some(loc) = parts.headers.get(header::LOCATION).cloned() {
                 if let Ok(s) = loc.to_str() {
-                    if let Some(rewritten) = rewrite_location(s, state.port) {
+                    if let Some(rewritten) = rewrite_location(s, state.target.port()) {
                         if let Ok(v) = HeaderValue::from_str(&rewritten) {
                             parts.headers.insert(header::LOCATION, v);
                         }
@@ -214,13 +231,32 @@ async fn forward(State(state): State<AppState>, req: Request) -> Response {
             ] {
                 parts.headers.remove(hop);
             }
-            Response::from_parts(parts, Body::new(Limited::new(incoming, MAX_PROXY_BYTES)))
+            let body = Body::new(Limited::new(incoming, MAX_PROXY_BYTES));
+            Response::from_parts(
+                parts,
+                Body::new(TransferBody::proxy(body, deadline, permit)),
+            )
         }
         Ok(Err(err)) => {
-            tracing::warn!("proxy to 127.0.0.1:{} failed: {err}", state.port);
+            if is_length_limit_error(&err) {
+                return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+            }
+            tracing::warn!("proxy to {} failed: {err}", state.target);
             StatusCode::BAD_GATEWAY.into_response()
         }
         Err(_) => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
+}
+
+fn is_length_limit_error(mut err: &(dyn std::error::Error + 'static)) -> bool {
+    loop {
+        if err.is::<http_body_util::LengthLimitError>() {
+            return true;
+        }
+        match err.source() {
+            Some(source) => err = source,
+            None => return false,
+        }
     }
 }
 
@@ -248,7 +284,10 @@ mod tests {
 
     #[test]
     fn rewrites_local_absolute_location() {
-        assert_eq!(rewrite_location("http://127.0.0.1:3000", 3000).as_deref(), Some("/"));
+        assert_eq!(
+            rewrite_location("http://127.0.0.1:3000", 3000).as_deref(),
+            Some("/")
+        );
         assert_eq!(
             rewrite_location("http://127.0.0.1:3000/app?x=1", 3000).as_deref(),
             Some("/app?x=1")
@@ -264,16 +303,25 @@ mod tests {
     async fn spawn_backend() -> u16 {
         let app = Router::new()
             .route("/hello", get(|| async { "hello from backend" }))
-            .route("/xff", get(|headers: axum::http::HeaderMap| async move {
-                headers
-                    .get("x-forwarded-for")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
-                    .to_string()
-            }))
-            .route("/go", get(|| async {
-                ([(header::LOCATION, "http://127.0.0.1:9/next")], StatusCode::FOUND)
-            }));
+            .route(
+                "/xff",
+                get(|headers: axum::http::HeaderMap| async move {
+                    headers
+                        .get("x-forwarded-for")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string()
+                }),
+            )
+            .route(
+                "/go",
+                get(|| async {
+                    (
+                        [(header::LOCATION, "http://127.0.0.1:9/next")],
+                        StatusCode::FOUND,
+                    )
+                }),
+            );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
@@ -284,7 +332,7 @@ mod tests {
 
     async fn spawn_proxy(backend: u16) -> u16 {
         let state = AppState {
-            port: backend,
+            target: SocketAddr::from(([127, 0, 0, 1], backend)),
             client: client(),
             last_activity: Arc::new(Mutex::new(Instant::now())),
             tunneled: false,
@@ -353,7 +401,7 @@ mod tests {
         let gate = Gate::pin(false);
         let pin = gate.pin_display().unwrap();
         let state = AppState {
-            port: backend,
+            target: SocketAddr::from(([127, 0, 0, 1], backend)),
             client: client(),
             last_activity: Arc::new(Mutex::new(Instant::now())),
             tunneled: false,

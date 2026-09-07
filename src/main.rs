@@ -8,9 +8,15 @@ mod public_url;
 mod qr;
 mod sanitize;
 mod share;
+mod transfer;
 mod upload;
 mod util;
 
+#[cfg(test)]
+#[path = "../test/regressions.rs"]
+mod regressions;
+
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -18,8 +24,11 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use cloudflare_quick_tunnel::{QuickTunnelHandle, QuickTunnelManager};
+use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::dest::DestDir;
@@ -32,6 +41,7 @@ const MAX_FILE_BYTES: u64 = 2048 * 1024 * 1024;
 const MIN_IDLE_SECS: u64 = 60;
 const MAX_IDLE_SECS: u64 = 120 * 60;
 const MAX_FILES: u32 = 32;
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Parser, Debug)]
 #[command(
@@ -134,7 +144,7 @@ async fn run() -> Result<()> {
 enum Prepared {
     Upload { dest: DestDir },
     Download { share: ShareFile },
-    Proxy { port: u16 },
+    Proxy { target: SocketAddr },
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
@@ -173,8 +183,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 bail!("invalid port");
             }
             event::progress("starting", format!("Checking localhost:{target}…"), 0.16);
-            ports::confirm_local_http(target).await?;
-            Prepared::Proxy { port: target }
+            let target = ports::confirm_local_http(target).await?;
+            Prepared::Proxy { target }
         }
     };
 
@@ -182,8 +192,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         .await
         .context("could not bind local server")?;
     let port = listener.local_addr()?.port();
-    if let Prepared::Proxy { port: target } = &prepared {
-        if *target == port {
+    if let Prepared::Proxy { target } = &prepared {
+        if target.port() == port {
             bail!("refusing to proxy the helper's own port");
         }
     }
@@ -267,21 +277,21 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 gate,
             })
         }
-        Prepared::Proxy { port: target } => {
+        Prepared::Proxy { target } => {
             let url = public_url::proxy_url(&origin)?;
             let qr = qr_ready(&url)?;
             event::emit(&Event::Ready {
                 url,
-                dest: format!("http://127.0.0.1:{target}"),
+                dest: format!("http://{target}"),
                 qr,
                 location,
                 mode: "proxy".into(),
                 name: None,
-                port: Some(target),
+                port: Some(target.port()),
                 password,
             });
             proxy::router(proxy::AppState {
-                port: target,
+                target,
                 client: proxy::client(),
                 last_activity: last_activity.clone(),
                 tunneled: !no_tunnel,
@@ -297,8 +307,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         serve_until_ready(listener, app, last_activity, started, idle, wall, stop_rx).await;
 
     if let Some(handle) = tunnel {
-        if let Err(err) = handle.shutdown().await {
-            tracing::warn!("tunnel shutdown: {err}");
+        match tokio::time::timeout(SHUTDOWN_GRACE, handle.shutdown()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => tracing::warn!("tunnel shutdown: {err}"),
+            Err(_) => tracing::warn!("tunnel shutdown timed out; exiting helper"),
         }
     }
     serve_result.context("bridge server stopped")?;
@@ -319,18 +331,64 @@ async fn serve_until_ready(
     wall: Duration,
     mut stop_rx: watch::Receiver<bool>,
 ) -> std::io::Result<()> {
-    axum::serve(listener, make)
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = shutdown_signal() => {}
-                _ = idle_watch(last_activity, idle) => {}
-                _ = wall_watch(started, wall) => {}
-                _ = async {
-                    let _ = stop_rx.wait_for(|v| *v).await;
-                } => {}
+    let shutdown = async move {
+        tokio::select! {
+            _ = shutdown_signal() => {}
+            _ = idle_watch(last_activity, idle) => {}
+            _ = wall_watch(started, wall) => {}
+            _ = async { let _ = stop_rx.wait_for(|v| *v).await; } => {}
+        }
+    };
+    tokio::pin!(shutdown);
+    let draining = CancellationToken::new();
+    let mut connections = JoinSet::new();
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => break,
+            Some(_) = connections.join_next(), if !connections.is_empty() => {}
+            accepted = listener.accept() => {
+                let (stream, _) = accepted?;
+                let service = TowerToHyperService::new(make.clone());
+                let (deadline_tx, deadline_rx) = watch::channel(None);
+                let deadline = transfer::ConnectionDeadline(deadline_tx);
+                let service = hyper::service::service_fn(move |mut request: hyper::Request<hyper::body::Incoming>| {
+                    request.extensions_mut().insert(deadline.clone());
+                    hyper::service::Service::call(&service, request)
+                });
+                let draining = draining.clone();
+                connections.spawn(async move {
+                    let builder = hyper::server::conn::http1::Builder::new();
+                    let connection = builder.serve_connection(TokioIo::new(stream), service);
+                    tokio::pin!(connection);
+                    tokio::select! {
+                        // Closing the socket also cancels a stalled upload or a
+                        // response whose receiver has stopped reading.
+                        _ = transfer::wait_deadline(deadline_rx) => {}
+                        _ = draining.cancelled() => {
+                            connection.as_mut().graceful_shutdown();
+                            let _ = connection.await;
+                        }
+                        _ = &mut connection => {}
+                    }
+                });
             }
-        })
-        .await
+        }
+    }
+    drop(listener);
+    draining.cancel();
+    if tokio::time::timeout(SHUTDOWN_GRACE, async {
+        while connections.join_next().await.is_some() {}
+    })
+    .await
+    .is_err()
+    {
+        // Unlike dropping axum::serve, aborting these owned tasks closes every
+        // active socket and drops pending request bodies and upload guards.
+        connections.abort_all();
+        while connections.join_next().await.is_some() {}
+    }
+    Ok(())
 }
 
 async fn shutdown_signal() {
@@ -352,7 +410,6 @@ async fn shutdown_signal() {
 
 async fn idle_watch(last: Arc<Mutex<Instant>>, idle: Duration) {
     loop {
-        tokio::time::sleep(Duration::from_secs(5)).await;
         let elapsed = Instant::now().saturating_duration_since(*last.lock().unwrap());
         if elapsed >= idle {
             event::status(
@@ -361,20 +418,17 @@ async fn idle_watch(last: Arc<Mutex<Instant>>, idle: Duration) {
             );
             break;
         }
+        tokio::time::sleep(idle - elapsed).await;
     }
 }
 
 async fn wall_watch(started: Instant, wall: Duration) {
-    loop {
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        if Instant::now().saturating_duration_since(started) >= wall {
-            event::status(
-                "session-timeout",
-                Some("Stopped after session time limit".to_string()),
-            );
-            break;
-        }
-    }
+    let elapsed = Instant::now().saturating_duration_since(started);
+    tokio::time::sleep(wall.saturating_sub(elapsed)).await;
+    event::status(
+        "session-timeout",
+        Some("Stopped after session time limit".to_string()),
+    );
 }
 
 async fn open_tunnel(port: u16) -> Result<QuickTunnelHandle> {

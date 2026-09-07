@@ -73,6 +73,15 @@ impl Gate {
         false
     }
 
+    /// Strip only credentials belonging to this bridge, preserving a backend's
+    /// Basic/Bearer authentication after the browser has obtained our cookie.
+    pub fn is_pin_authorization(&self, headers: &HeaderMap) -> bool {
+        match (&self.inner, basic_password(headers)) {
+            (Some(g), Some(pass)) => constant_time_eq(pass.trim().as_bytes(), g.pin.as_bytes()),
+            _ => false,
+        }
+    }
+
     pub fn unlock(&self, password: &str) -> Result<HeaderValue, String> {
         if self.inner.is_none() {
             return Err("no password on this session".into());
@@ -175,7 +184,10 @@ pub fn safe_next_path(raw: &str) -> String {
     if !raw.starts_with('/') || raw.starts_with("//") || raw.contains('\\') {
         return "/".into();
     }
-    if raw.chars().any(|c| c.is_control() || c == '<' || c == '>' || c == '"') {
+    if raw
+        .chars()
+        .any(|c| c.is_control() || c == '<' || c == '>' || c == '"')
+    {
         return "/".into();
     }
     raw.chars().take(200).collect()
@@ -282,6 +294,30 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, basic_header(&pin));
         assert!(gate.is_open(&headers));
+    }
+
+    #[test]
+    fn distinguishes_pin_credentials_from_backend_authorization() {
+        let gate = Gate::pin(false);
+        let pin = gate.pin_display().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, basic_header(&pin));
+        assert!(gate.is_pin_authorization(&headers));
+        let cookie = gate.cookie_header();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(cookie.to_str().unwrap().split(';').next().unwrap()).unwrap(),
+        );
+        assert!(gate.is_pin_authorization(&headers));
+        headers.insert(header::AUTHORIZATION, basic_header("backend-password"));
+        assert!(gate.is_open(&headers));
+        assert!(!gate.is_pin_authorization(&headers));
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer backend-token"),
+        );
+        assert!(gate.is_open(&headers));
+        assert!(!gate.is_pin_authorization(&headers));
     }
 
     #[test]

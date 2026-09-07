@@ -247,13 +247,11 @@ fn openat_dir(dirfd: i32, name: &CString) -> io::Result<File> {
 
 fn is_symlink_at(dirfd: i32, name: &CString) -> bool {
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    let rc = unsafe {
-        libc::fstatat(dirfd, name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW)
-    };
+    let rc = unsafe { libc::fstatat(dirfd, name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) };
     rc == 0 && (st.st_mode & libc::S_IFMT) == libc::S_IFLNK
 }
 
-fn mkdirat(dirfd: i32, name: &CString, mode: u32) -> Result<()> {
+fn mkdirat(dirfd: i32, name: &CString, mode: libc::mode_t) -> Result<()> {
     let rc = unsafe { libc::mkdirat(dirfd, name.as_ptr(), mode) };
     if rc == 0 {
         return Ok(());
@@ -297,8 +295,7 @@ fn c_path(path: &Path) -> Result<CString> {
 }
 
 fn c_name(name: &str) -> Result<CString> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\0')
-    {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\0') {
         bail!("invalid file name");
     }
     CString::new(name).context("file name contains NUL")
@@ -318,6 +315,7 @@ fn c_component(name: &OsStr) -> Result<CString> {
     CString::new(bytes).context("path component contains NUL")
 }
 
+#[cfg(test)]
 fn open_dir_nofollow(path: &Path) -> Result<File> {
     let c = c_path(path)?;
     let fd = unsafe {
@@ -334,14 +332,7 @@ fn open_dir_nofollow(path: &Path) -> Result<File> {
 
 pub fn child_exists(dirfd: i32, name: &str) -> Result<bool> {
     let c = c_name(name)?;
-    let rc = unsafe {
-        libc::faccessat(
-            dirfd,
-            c.as_ptr(),
-            libc::F_OK,
-            libc::AT_SYMLINK_NOFOLLOW,
-        )
-    };
+    let rc = unsafe { libc::faccessat(dirfd, c.as_ptr(), libc::F_OK, libc::AT_SYMLINK_NOFOLLOW) };
     if rc == 0 {
         return Ok(true);
     }
@@ -395,14 +386,32 @@ pub fn openat_excl(dirfd: i32, name: &str) -> Result<File> {
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-pub fn renameat(dirfd: i32, from: &str, to: &str) -> Result<()> {
+/// Atomically publish a completed upload without replacing an existing entry.
+/// Returns false when another writer claimed the name first.
+pub fn publish_noreplace(dirfd: i32, from: &str, to: &str) -> Result<bool> {
     let src = c_name(from)?;
     let dst = c_name(to)?;
-    let rc = unsafe { libc::renameat(dirfd, src.as_ptr(), dirfd, dst.as_ptr()) };
+    #[cfg(target_os = "linux")]
+    let rc = unsafe {
+        libc::renameat2(
+            dirfd,
+            src.as_ptr(),
+            dirfd,
+            dst.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    // The caller's temporary-file guard removes the extra link on other Unix hosts.
+    #[cfg(not(target_os = "linux"))]
+    let rc = unsafe { libc::linkat(dirfd, src.as_ptr(), dirfd, dst.as_ptr(), 0) };
     if rc != 0 {
-        return Err(io::Error::last_os_error()).context("could not save file");
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::EEXIST) {
+            return Ok(false);
+        }
+        return Err(err).context("could not save file");
     }
-    Ok(())
+    Ok(true)
 }
 
 pub fn unlinkat(dirfd: i32, name: &str) -> Result<()> {
@@ -457,10 +466,7 @@ mod tests {
         let anchor = open_anchor(dir.path()).unwrap();
         let err = walk_components(
             anchor,
-            &[
-                OsString::from("Downloads"),
-                OsString::from("Quick Bridge"),
-            ],
+            &[OsString::from("Downloads"), OsString::from("Quick Bridge")],
             true,
         )
         .unwrap_err();
@@ -488,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn renameat_replaces_symlink_not_target() {
+    fn publish_never_replaces_symlinks_or_files() {
         let dir = tempfile::tempdir().unwrap();
         let victim = dir.path().join("victim");
         fs::write(&victim, b"must survive").unwrap();
@@ -500,8 +506,11 @@ mod tests {
         tmp.write_all(b"upload").unwrap();
         tmp.sync_all().unwrap();
         drop(tmp);
-        renameat(fd, ".quickbridge-test.part", "notes.txt").unwrap();
+        assert!(!publish_noreplace(fd, ".quickbridge-test.part", "notes.txt").unwrap());
         assert_eq!(fs::read(&victim).unwrap(), b"must survive");
-        assert_eq!(fs::read(dir.path().join("notes.txt")).unwrap(), b"upload");
+        assert!(dir.path().join("notes.txt").is_symlink());
+        assert!(!publish_noreplace(fd, ".quickbridge-test.part", "victim").unwrap());
+        assert!(publish_noreplace(fd, ".quickbridge-test.part", "notes-1.txt").unwrap());
+        assert_eq!(fs::read(dir.path().join("notes-1.txt")).unwrap(), b"upload");
     }
 }

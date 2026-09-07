@@ -1,20 +1,18 @@
-use std::io::SeekFrom;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::body::Body;
 use axum::extract::{Form, Path, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use tokio::io::AsyncSeekExt;
 use tokio::sync::watch;
-use tokio_util::io::ReaderStream;
 
 use crate::event::{self, Event};
-use crate::share::ShareFile;
 use crate::gate::{self, Gate, UnlockForm};
+use crate::share::ShareFile;
+use crate::transfer::TransferBody;
 use crate::util::{
     constant_time_eq, content_disposition, format_bytes, html_escape, secure_html_with_csp,
 };
@@ -60,10 +58,7 @@ async fn root() -> StatusCode {
     StatusCode::NOT_FOUND
 }
 
-async fn page_redirect(
-    Path(token): Path<String>,
-    State(state): State<AppState>,
-) -> Response {
+async fn page_redirect(Path(token): Path<String>, State(state): State<AppState>) -> Response {
     if !state.allowed(&token) {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -92,10 +87,7 @@ async fn page(
     let html = PAGE
         .replace("{{NAME}}", &html_escape(&state.share.name))
         .replace("{{SIZE_LABEL}}", &format_bytes(state.share.size))
-        .replace(
-            "{{AUTO}}",
-            if state.stop_after { "1" } else { "0" },
-        )
+        .replace("{{AUTO}}", if state.stop_after { "1" } else { "0" })
         .replace("{{PREVIEW}}", &preview);
     secure_html_with_csp(html, CSP)
 }
@@ -118,6 +110,7 @@ async fn unlock(
 async fn file(
     Path(token): Path<String>,
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
 ) -> Response {
     if !state.allowed(&token) {
@@ -127,16 +120,13 @@ async fn file(
         return Redirect::temporary("./").into_response();
     }
     state.touch();
-    event::emit(&Event::Download {
-        name: state.share.name.clone(),
-        size: state.share.size,
-    });
-    file_response(&state, false).await
+    file_response(&state, false, method == Method::HEAD)
 }
 
 async fn preview(
     Path(token): Path<String>,
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
 ) -> Response {
     if !state.allowed(&token) {
@@ -149,30 +139,35 @@ async fn preview(
         return StatusCode::NOT_FOUND.into_response();
     }
     state.touch();
-    file_response(&state, true).await
+    file_response(&state, true, method == Method::HEAD)
 }
 
-async fn file_response(state: &AppState, inline: bool) -> Response {
-    if state.stop_after && !inline {
-        let tx = state.shutdown.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            event::status("stop-after", Some("Stopped after download".to_string()));
-            let _ = tx.send(true);
-        });
-    }
-    let body = match state.share.tokio_file() {
-        Ok(Some(mut file)) => {
-            if file.seek(SeekFrom::Start(0)).await.is_err() {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-            Body::from_stream(ReaderStream::new(file))
-        }
-        Ok(None) => match state.share.body_bytes() {
-            Ok(bytes) => Body::from(bytes.as_ref().clone()),
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        },
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+fn file_response(state: &AppState, inline: bool, head: bool) -> Response {
+    let body = if head {
+        Body::empty()
+    } else if inline {
+        state.share.body()
+    } else {
+        let completed = state.clone();
+        Body::new(TransferBody::download(
+            state.share.body(),
+            state.share.size,
+            move || {
+                completed.touch();
+                event::emit(&Event::Download {
+                    name: completed.share.name.clone(),
+                    size: completed.share.size,
+                });
+                if completed.stop_after {
+                    tokio::spawn(async move {
+                        // Give Hyper time to flush the final frame before shutting down.
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                        event::status("stop-after", Some("Stopped after download".to_string()));
+                        let _ = completed.shutdown.send(true);
+                    });
+                }
+            },
+        ))
     };
 
     let mut response = Response::new(body);

@@ -2,13 +2,18 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::FileExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Command;
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use axum::body::{Body, Bytes};
+use hyper::body::{Body as HttpBody, Frame, SizeHint};
 
 use crate::dest;
 use crate::sanitize::sanitize_filename;
@@ -27,7 +32,7 @@ pub struct ShareFile {
 #[derive(Clone)]
 enum ShareInner {
     Fd(Arc<File>),
-    Memory(Arc<Vec<u8>>),
+    Memory(Bytes),
 }
 
 impl ShareFile {
@@ -54,39 +59,78 @@ impl ShareFile {
         match &self.inner {
             ShareInner::Memory(bytes) => Ok(bytes.iter().copied().take(n).collect()),
             ShareInner::Fd(file) => {
-                let mut clone = file.try_clone().context("clone share fd")?;
-                use std::io::Seek;
-                clone.seek(io::SeekFrom::Start(0))?;
                 let mut buf = vec![0u8; n.min(self.size as usize)];
-                let got = clone.read(&mut buf)?;
-                buf.truncate(got);
+                file.read_exact_at(&mut buf, 0)?;
                 Ok(buf)
             }
         }
     }
 
-    pub fn body_bytes(&self) -> Result<Arc<Vec<u8>>> {
+    pub fn body(&self) -> Body {
         match &self.inner {
-            ShareInner::Memory(bytes) => Ok(bytes.clone()),
-            ShareInner::Fd(file) => {
-                let mut clone = file.try_clone().context("clone share fd")?;
-                use std::io::Seek;
-                clone.seek(io::SeekFrom::Start(0))?;
-                let mut buf = Vec::with_capacity(self.size as usize);
-                clone.read_to_end(&mut buf)?;
-                Ok(Arc::new(buf))
+            ShareInner::Memory(bytes) => Body::from(bytes.clone()),
+            ShareInner::Fd(file) => Body::new(FileBody {
+                file: file.clone(),
+                offset: 0,
+                size: self.size,
+                pending: None,
+            }),
+        }
+    }
+}
+
+/// Each response owns its offset while retaining the originally verified file.
+/// Positional reads also work after an ephemeral snapshot has been unlinked.
+struct FileBody {
+    file: Arc<File>,
+    offset: u64,
+    size: u64,
+    pending: Option<tokio::task::JoinHandle<io::Result<Vec<u8>>>>,
+}
+
+impl HttpBody for FileBody {
+    type Data = Bytes;
+    type Error = io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+        if self.offset == self.size {
+            return Poll::Ready(None);
+        }
+        if self.pending.is_none() {
+            let file = self.file.clone();
+            let offset = self.offset;
+            let len = (self.size - offset).min(64 * 1024) as usize;
+            self.pending = Some(tokio::task::spawn_blocking(move || {
+                let mut bytes = vec![0; len];
+                file.read_exact_at(&mut bytes, offset)?;
+                Ok(bytes)
+            }));
+        }
+        let result = std::task::ready!(std::future::Future::poll(
+            Pin::new(self.pending.as_mut().unwrap()),
+            cx
+        ));
+        self.pending = None;
+        match result.unwrap_or_else(|err| Err(io::Error::other(err))) {
+            Ok(bytes) => {
+                self.offset += bytes.len() as u64;
+                Poll::Ready(Some(Ok(Frame::data(Bytes::from(bytes)))))
+            }
+            Err(err) => {
+                self.offset = self.size;
+                Poll::Ready(Some(Err(err)))
             }
         }
     }
 
-    pub fn tokio_file(&self) -> Result<Option<tokio::fs::File>> {
-        match &self.inner {
-            ShareInner::Fd(file) => {
-                let clone = file.try_clone().context("clone share fd")?;
-                Ok(Some(tokio::fs::File::from_std(clone)))
-            }
-            ShareInner::Memory(_) => Ok(None),
-        }
+    fn is_end_stream(&self) -> bool {
+        self.offset == self.size
+    }
+    fn size_hint(&self) -> SizeHint {
+        SizeHint::with_exact(self.size - self.offset)
     }
 }
 
@@ -175,7 +219,7 @@ pub fn capture_clipboard(max_bytes: u64) -> Result<ShareFile> {
         name: name.to_string(),
         size: bytes.len() as u64,
         mime: mime.to_string(),
-        inner: ShareInner::Memory(Arc::new(bytes)),
+        inner: ShareInner::Memory(Bytes::from(bytes)),
     })
 }
 
@@ -205,7 +249,10 @@ fn wl_paste_bytes(args: &[&str], cap: u64) -> Result<Vec<u8>> {
             Ok(n) => {
                 if buf.len() as u64 + n as u64 > cap {
                     let _ = child.kill();
-                    bail!("clipboard is larger than {}", crate::util::format_bytes(cap));
+                    bail!(
+                        "clipboard is larger than {}",
+                        crate::util::format_bytes(cap)
+                    );
                 }
                 buf.extend_from_slice(&chunk[..n]);
             }
@@ -334,7 +381,7 @@ mod tests {
         let share = open_file(path, 1024 * 1024, false).unwrap();
         assert_eq!(share.name, "notes.txt");
         assert_eq!(share.size, 11);
-        assert_eq!(share.body_bytes().unwrap().as_ref(), b"hello phone");
+        assert_eq!(share.read_prefix(100).unwrap(), b"hello phone");
     }
 
     #[test]

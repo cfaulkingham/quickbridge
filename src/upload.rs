@@ -13,16 +13,74 @@ use tokio::sync::watch;
 
 use crate::dest::{self, DestDir};
 use crate::event::{self, Event};
-use crate::sanitize::sanitize_filename;
 use crate::gate::{self, Gate, UnlockForm};
+use crate::sanitize::sanitize_filename;
 use crate::util::{constant_time_eq, format_bytes, secure_html};
 
 const PAGE: &str = include_str!("upload.html");
 
 #[derive(Clone)]
 pub struct SessionUsed {
+    // Includes reservations for in-flight uploads as well as completed files.
     pub bytes: u64,
     pub files: u32,
+}
+
+struct Reservation {
+    used: Arc<Mutex<SessionUsed>>,
+    bytes: u64,
+    active: bool,
+}
+
+impl Reservation {
+    fn acquire(state: &AppState) -> Result<Self, String> {
+        let mut used = state.used.lock().map_err(|_| "session busy".to_string())?;
+        let max_files = if state.stop_after { 1 } else { state.max_files };
+        if used.files >= max_files {
+            return Err("session file limit reached".into());
+        }
+        let bytes = state
+            .max_session_bytes
+            .saturating_sub(used.bytes)
+            .min(state.max_bytes);
+        if bytes == 0 {
+            return Err("session size limit reached".into());
+        }
+        used.files += 1;
+        used.bytes += bytes;
+        Ok(Self {
+            used: state.used.clone(),
+            bytes,
+            active: true,
+        })
+    }
+
+    fn commit(mut self, size: u64) {
+        self.used.lock().unwrap().bytes -= self.bytes - size;
+        self.active = false;
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        if self.active {
+            let mut used = self.used.lock().unwrap();
+            used.bytes -= self.bytes;
+            used.files -= 1;
+        }
+    }
+}
+
+// Also cleans up when a request or connection is canceled during an await.
+struct TempUpload {
+    dest: DestDir,
+    name: String,
+}
+
+impl Drop for TempUpload {
+    fn drop(&mut self) {
+        let _ = dest::unlinkat(self.dest.as_raw_fd(), &self.name);
+    }
 }
 
 #[derive(Clone)]
@@ -78,10 +136,7 @@ async fn root() -> StatusCode {
     StatusCode::NOT_FOUND
 }
 
-async fn page_redirect(
-    Path(token): Path<String>,
-    State(state): State<AppState>,
-) -> Response {
+async fn page_redirect(Path(token): Path<String>, State(state): State<AppState>) -> Response {
     if !state.allowed(&token) {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -183,39 +238,17 @@ async fn save_files(
         .map_err(|e| format!("invalid upload: {e}"))?
     {
         let original = match field.file_name() {
-            Some(name) if !name.is_empty() => {
-                let mut s = name.to_string();
-                if s.len() > 4096 {
-                    s.truncate(4096);
-                }
-                s
-            }
+            Some(name) if !name.is_empty() => name.chars().take(4096).collect::<String>(),
             _ => continue,
         };
         let name = sanitize_filename(&original);
-        let remaining = {
-            let used = state.used.lock().map_err(|_| "session busy".to_string())?;
-            if used.files >= state.max_files {
-                return Err("session file limit reached".into());
-            }
-            state
-                .max_session_bytes
-                .saturating_sub(used.bytes)
-                .min(state.max_bytes)
-        };
-        if remaining == 0 {
-            return Err("session size limit reached".into());
-        }
-        let (saved_name, size) = write_field(field, &state.dest, &name, remaining).await?;
-        if size == 0 {
-            let _ = dest::unlinkat(state.dest.as_raw_fd(), &saved_name);
+        let reservation = Reservation::acquire(&state)?;
+        let Some((saved_name, size)) =
+            write_field(field, &state.dest, &name, reservation.bytes).await?
+        else {
             continue;
-        }
-        {
-            let mut used = state.used.lock().map_err(|_| "session busy".to_string())?;
-            used.files = used.files.saturating_add(1);
-            used.bytes = used.bytes.saturating_add(size);
-        }
+        };
+        reservation.commit(size);
         state.touch();
         let path = state.dest.path.join(&saved_name);
         event::emit(&Event::Upload {
@@ -241,11 +274,14 @@ async fn write_field(
     dest: &DestDir,
     name: &str,
     max_bytes: u64,
-) -> Result<(String, u64), String> {
+) -> Result<Option<(String, u64)>, String> {
     let dirfd = dest.as_raw_fd();
-    let final_name = dest::unique_name(dirfd, name).map_err(|e| e.to_string())?;
     let tmp_name = format!(".quickbridge-{}.part", uuid::Uuid::new_v4().simple());
     let std_file = dest::openat_excl(dirfd, &tmp_name).map_err(|e| e.to_string())?;
+    let temp = TempUpload {
+        dest: dest.clone(),
+        name: tmp_name,
+    };
     let mut file = tokio::fs::File::from_std(std_file);
     let mut written: u64 = 0;
     let result: Result<u64, String> = async {
@@ -273,17 +309,19 @@ async fn write_field(
     }
     .await;
     drop(file);
-    match result {
-        Ok(n) => {
-            dest::renameat(dirfd, &tmp_name, &final_name).map_err(|e| e.to_string())?;
+    let size = result?;
+    if size == 0 {
+        return Ok(None);
+    }
+    for _ in 0..10_000 {
+        let final_name = dest::unique_name(dirfd, name).map_err(|e| e.to_string())?;
+        if dest::publish_noreplace(dirfd, &temp.name, &final_name).map_err(|e| e.to_string())? {
+            drop(temp);
             let _ = dest::fsync_dir(dirfd);
-            Ok((final_name, n))
-        }
-        Err(err) => {
-            let _ = dest::unlinkat(dirfd, &tmp_name);
-            Err(err)
+            return Ok(Some((final_name, size)));
         }
     }
+    Err("could not reserve an upload filename".into())
 }
 
 #[cfg(test)]
@@ -359,10 +397,7 @@ mod tests {
         );
         let client = reqwest::Client::new();
         let res = client
-            .post(format!(
-                "http://127.0.0.1:{port}/s/{}/upload",
-                state.token
-            ))
+            .post(format!("http://127.0.0.1:{port}/s/{}/upload", state.token))
             .multipart(form)
             .send()
             .await
@@ -394,10 +429,7 @@ mod tests {
         );
         let client = reqwest::Client::new();
         let res = client
-            .post(format!(
-                "http://127.0.0.1:{port}/s/{}/upload",
-                state.token
-            ))
+            .post(format!("http://127.0.0.1:{port}/s/{}/upload", state.token))
             .multipart(form)
             .send()
             .await
@@ -407,10 +439,7 @@ mod tests {
         let body: serde_json::Value = res.json().await.unwrap();
         let name = body["name"].as_str().unwrap();
         assert_ne!(name, "notes.txt");
-        assert_eq!(
-            std::fs::read(dir.path().join(name)).unwrap(),
-            b"from phone"
-        );
+        assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), b"from phone");
     }
 
     #[tokio::test]
@@ -445,10 +474,7 @@ mod tests {
                 .unwrap(),
         );
         let denied = client
-            .post(format!(
-                "http://127.0.0.1:{port}/s/{}/upload",
-                state.token
-            ))
+            .post(format!("http://127.0.0.1:{port}/s/{}/upload", state.token))
             .multipart(form)
             .send()
             .await
@@ -456,10 +482,7 @@ mod tests {
         assert_eq!(denied.status(), reqwest::StatusCode::UNAUTHORIZED);
 
         let unlocked = client
-            .post(format!(
-                "http://127.0.0.1:{port}/s/{}/unlock",
-                state.token
-            ))
+            .post(format!("http://127.0.0.1:{port}/s/{}/unlock", state.token))
             .header("content-type", "application/x-www-form-urlencoded")
             .body(format!("password={pin}"))
             .send()
@@ -484,10 +507,7 @@ mod tests {
                 .unwrap(),
         );
         let ok = client
-            .post(format!(
-                "http://127.0.0.1:{port}/s/{}/upload",
-                state.token
-            ))
+            .post(format!("http://127.0.0.1:{port}/s/{}/upload", state.token))
             .header(reqwest::header::COOKIE, cookie)
             .multipart(form)
             .send()
