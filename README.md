@@ -11,6 +11,10 @@ and publishes it through a Cloudflare quick tunnel
 [`cloudflare-quick-tunnel`](https://docs.rs/cloudflare-quick-tunnel) crate —
 not the `cloudflared` app.
 
+<p align="center">
+  <img src="preview.png" alt="Quick Bridge panel in a live Upload session: QR code, public HTTPS link, copy and open-folder actions, save folder, and recent files" width="280">
+</p>
+
 - **Upload** — scan the code on your phone and send a photo or document. It
   lands in `~/Downloads/Quick Bridge`.
 - **Download** — share a file or the current clipboard. The phone scans the
