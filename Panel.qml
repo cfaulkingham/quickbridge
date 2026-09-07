@@ -539,6 +539,10 @@ Panel {
     Util.execArgv(["/usr/bin/xdg-open", root.dest])
   }
 
+  function openCloudflareQuickTunnels() {
+    Util.execArgv(["/usr/bin/omarchy-launch-browser", "https://trycloudflare.com/"])
+  }
+
   function openUpload(path) {
     if (!root.pathUnderDest(path)) return
     Util.execArgv(["/usr/bin/xdg-open", path])
@@ -1321,6 +1325,33 @@ Panel {
             color: root.dim
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
+          }
+        }
+
+        PanelSeparator {
+          foreground: root.contentForeground
+        }
+
+        Text {
+          width: parent.width
+          text: "Powered By: Cloudflare Quick Tunnels"
+          textFormat: Text.PlainText
+          color: root.dim
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.openCloudflareQuickTunnels()
+
+            PanelToolTip {
+              visible: parent.containsMouse
+              text: "Opens trycloudflare.com"
+              fontFamily: root.contentFontFamily
+            }
           }
         }
       }

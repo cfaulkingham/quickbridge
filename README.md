@@ -6,7 +6,8 @@ from the phone.
 
 Clicking the bar icon opens the panel. Choose **Upload**, **Download**, or
 **Proxy**, then turn the session on. A local helper listens on `127.0.0.1`
-and publishes it through a Cloudflare quick tunnel
+and publishes it through a
+[Cloudflare Quick Tunnel](https://trycloudflare.com/)
 (`https://*.trycloudflare.com`) using the pure-Rust
 [`cloudflare-quick-tunnel`](https://docs.rs/cloudflare-quick-tunnel) crate —
 not the `cloudflared` app.
@@ -145,3 +146,11 @@ These are **not** deleted and survive removal:
 - `setpriv` and `setsid` (util-linux, already on Omarchy)
 - `wl-copy` / `wl-paste` for the link and clipboard sharing
 - `omarchy-file-select` for the download file picker
+
+## Credits
+
+Public HTTPS links are provided by
+[Cloudflare Quick Tunnels](https://trycloudflare.com/), Cloudflare's free
+TryCloudflare service. How it works is in the
+[Quick Tunnels docs](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
+This plugin is not affiliated with Cloudflare.
