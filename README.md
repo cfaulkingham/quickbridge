@@ -1,4 +1,4 @@
-![Quick Bridge — Your phone. Your desktop. One quick bridge. Upload files, share your clipboard, and open local web apps on your phone over HTTPS.](preview.png)
+![Quick Bridge — Your phone. Your desktop. One quick bridge. Upload files, share your clipboard, and open local web apps on your phone over HTTPS.](preview.png?v=65172acb)
 
 ## Quick Bridge
 
