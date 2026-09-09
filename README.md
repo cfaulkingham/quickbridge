@@ -1,6 +1,6 @@
 ![Quick Bridge — Your phone. Your desktop. One quick bridge. Upload files, share your clipboard, and open local web apps on your phone over HTTPS.](preview.png)
 
-# Quick Bridge
+## Quick Bridge
 
 An Omarchy bar plugin that opens a QR code and HTTPS link so this computer
 and your phone can exchange files, or so a local HTTP server can be reached
