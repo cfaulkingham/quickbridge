@@ -1,3 +1,5 @@
+![Quick Bridge — Your phone. Your desktop. One quick bridge. Upload files, share your clipboard, and open local web apps on your phone over HTTPS.](preview.png)
+
 # Quick Bridge
 
 An Omarchy bar plugin that opens a QR code and HTTPS link so this computer
@@ -11,10 +13,6 @@ and publishes it through a
 (`https://*.trycloudflare.com`) using the pure-Rust
 [`cloudflare-quick-tunnel`](https://docs.rs/cloudflare-quick-tunnel) crate —
 not the `cloudflared` app.
-
-<p align="center">
-  <img src="preview.png" alt="Quick Bridge panel in a live Upload session: QR code, public HTTPS link, copy and open-folder actions, save folder, and recent files" width="280">
-</p>
 
 - **Upload** — scan the code on your phone and send a photo or document. It
   lands in `~/Downloads/Quick Bridge`.
