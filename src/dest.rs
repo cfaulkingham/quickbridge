@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 
+use crate::i18n::t;
+
 const MAX_DEST_DEPTH: usize = 16;
 const SENSITIVE_NAMES: &[&str] = &[".ssh", ".gnupg", ".pki", ".gpg", ".password-store"];
 
@@ -26,7 +28,7 @@ impl DestDir {
     }
 
     pub fn prepare(user: Option<PathBuf>) -> Result<Self> {
-        let home = dirs::home_dir().context("no home directory")?;
+        let home = dirs::home_dir().context(t("no_home"))?;
         let home_fd = open_anchor(&home)?;
         let home_real = realpath_fd(home_fd.as_raw_fd()).unwrap_or_else(|_| home.clone());
         let (anchor, parts, display) = match user {
@@ -86,16 +88,16 @@ fn user_walk(
     p: PathBuf,
 ) -> Result<(File, Vec<OsString>, PathBuf)> {
     if !p.is_absolute() {
-        bail!("save folder must be an absolute path");
+        bail!("{}", t("dest_absolute"));
     }
     if p.as_os_str().as_bytes().contains(&0) {
-        bail!("save folder contains NUL");
+        bail!("{}", t("dest_nul"));
     }
     let name = p
         .file_name()
-        .ok_or_else(|| anyhow::anyhow!("save folder has no name"))?;
+        .ok_or_else(|| anyhow::anyhow!("{}", t("dest_no_name")))?;
     if name == "." || name == ".." {
-        bail!("invalid save folder name");
+        bail!("{}", t("dest_bad_name"));
     }
     if p.starts_with(home_real) || p.starts_with(home) {
         let parts = relative_components_either(home, home_real, &p)?;
@@ -110,31 +112,31 @@ fn user_walk(
             return Ok((dl_fd, parts, p));
         }
     }
-    bail!("save folder must be under your home directory")
+    bail!("{}", t("dest_home"))
 }
 
 fn relative_components(base: &Path, dest: &Path) -> Result<Vec<OsString>> {
     let rel = dest
         .strip_prefix(base)
-        .map_err(|_| anyhow::anyhow!("save folder must be under your home directory"))?;
+        .map_err(|_| anyhow::anyhow!("{}", t("dest_home")))?;
     let mut parts = Vec::new();
     for c in rel.components() {
         match c {
             Component::Normal(s) => {
                 if s.is_empty() || s == "." || s == ".." {
-                    bail!("invalid save folder name");
+                    bail!("{}", t("dest_bad_name"));
                 }
                 parts.push(s.to_os_string());
             }
             Component::CurDir => {}
-            _ => bail!("invalid save folder path"),
+            _ => bail!("{}", t("dest_bad_path")),
         }
     }
     if parts.is_empty() {
-        bail!("path cannot be your home directory");
+        bail!("{}", t("dest_is_home"));
     }
     if parts.len() > MAX_DEST_DEPTH {
-        bail!("save folder path is too deep");
+        bail!("{}", t("dest_deep"));
     }
     Ok(parts)
 }
@@ -158,26 +160,26 @@ fn open_anchor(path: &Path) -> Result<File> {
         )
     };
     if fd < 0 {
-        return Err(io::Error::last_os_error()).context("could not open save folder root");
+        return Err(io::Error::last_os_error()).context(t("dest_open_root"));
     }
     let file = unsafe { File::from_raw_fd(fd) };
-    let meta = file.metadata().context("stat save folder root")?;
+    let meta = file.metadata().context(t("dest_stat_root"))?;
     if !meta.is_dir() {
-        bail!("save folder root is not a directory");
+        bail!("{}", t("dest_root_not_dir"));
     }
     if meta.uid() != euid() {
-        bail!("save folder root is not owned by you");
+        bail!("{}", t("dest_root_owner"));
     }
     Ok(file)
 }
 
 fn walk_components(mut fd: File, parts: &[OsString], chmod_leaf: bool) -> Result<File> {
     if parts.is_empty() {
-        bail!("save folder has no name");
+        bail!("{}", t("dest_no_name"));
     }
     for (i, part) in parts.iter().enumerate() {
         if forbidden_component(part) {
-            bail!("that path is not allowed");
+            bail!("{}", t("dest_forbidden"));
         }
         let is_leaf = i + 1 == parts.len();
         let name = c_component(part)?;
@@ -190,32 +192,32 @@ fn walk_components(mut fd: File, parts: &[OsString], chmod_leaf: bool) -> Result
                 match openat_dir(dirfd, &name) {
                     Ok(f) => f,
                     Err(_) if is_symlink_at(dirfd, &name) => {
-                        bail!("save folder path cannot contain a symlink");
+                        bail!("{}", t("dest_symlink"));
                     }
                     Err(err) => {
-                        return Err(err).context("could not open save folder");
+                        return Err(err).context(t("dest_open"));
                     }
                 }
             }
             Err(err) => {
                 if is_symlink_at(dirfd, &name) {
-                    bail!("save folder path cannot contain a symlink");
+                    bail!("{}", t("dest_symlink"));
                 }
-                return Err(err).context("could not open save folder");
+                return Err(err).context(t("dest_open"));
             }
         };
-        let meta = next.metadata().context("stat save folder")?;
+        let meta = next.metadata().context(t("dest_stat"))?;
         if !meta.is_dir() {
-            bail!("save folder is not a directory");
+            bail!("{}", t("dest_not_dir"));
         }
         if meta.uid() != euid() {
-            bail!("save folder is not owned by you");
+            bail!("{}", t("dest_owner"));
         }
         if is_leaf && chmod_leaf {
             let rc = unsafe { libc::fchmod(next.as_raw_fd(), 0o700) };
             if rc != 0 {
                 return Err(io::Error::last_os_error())
-                    .context("could not set save folder permissions");
+                    .context(t("dest_chmod"));
             }
         }
         let real = realpath_fd(next.as_raw_fd()).unwrap_or_default();
@@ -260,7 +262,7 @@ fn mkdirat(dirfd: i32, name: &CString, mode: libc::mode_t) -> Result<()> {
     if err.raw_os_error() == Some(libc::EEXIST) {
         return Ok(());
     }
-    Err(err).context("could not create save folder")
+    Err(err).context(t("dest_create"))
 }
 
 fn forbidden_component(name: &OsStr) -> bool {
@@ -275,30 +277,30 @@ pub fn refuse_sensitive(path: &Path) -> Result<()> {
     };
     let home = fs::canonicalize(&home).unwrap_or(home);
     if path == home {
-        bail!("path cannot be your home directory");
+        bail!("{}", t("dest_is_home"));
     }
     for name in SENSITIVE_NAMES {
         let sensitive = home.join(name);
         if path == sensitive || path.starts_with(&sensitive) {
-            bail!("that path is not allowed");
+            bail!("{}", t("dest_forbidden"));
         }
     }
     Ok(())
 }
 
 fn realpath_fd(fd: i32) -> Result<PathBuf> {
-    std::fs::read_link(format!("/proc/self/fd/{fd}")).context("resolve directory path")
+    std::fs::read_link(format!("/proc/self/fd/{fd}")).context(t("resolve_dir"))
 }
 
 fn c_path(path: &Path) -> Result<CString> {
-    CString::new(path.as_os_str().as_bytes()).context("path contains NUL")
+    CString::new(path.as_os_str().as_bytes()).context(t("path_nul_generic"))
 }
 
 fn c_name(name: &str) -> Result<CString> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\0') {
-        bail!("invalid file name");
+        bail!("{}", t("bad_filename"));
     }
-    CString::new(name).context("file name contains NUL")
+    CString::new(name).context(t("name_nul"))
 }
 
 fn c_component(name: &OsStr) -> Result<CString> {
@@ -310,9 +312,9 @@ fn c_component(name: &OsStr) -> Result<CString> {
         || name == ".."
         || bytes.len() > 255
     {
-        bail!("invalid save folder name");
+        bail!("{}", t("dest_bad_name"));
     }
-    CString::new(bytes).context("path component contains NUL")
+    CString::new(bytes).context(t("component_nul"))
 }
 
 #[cfg(test)]
@@ -325,7 +327,7 @@ fn open_dir_nofollow(path: &Path) -> Result<File> {
         )
     };
     if fd < 0 {
-        return Err(io::Error::last_os_error()).context("could not open save folder");
+        return Err(io::Error::last_os_error()).context(t("dest_open"));
     }
     Ok(unsafe { File::from_raw_fd(fd) })
 }
@@ -340,7 +342,7 @@ pub fn child_exists(dirfd: i32, name: &str) -> Result<bool> {
     if err.raw_os_error() == Some(libc::ENOENT) {
         return Ok(false);
     }
-    Err(err).context("stat dest entry")
+    Err(err).context(t("dest_stat_entry"))
 }
 
 pub fn unique_name(dirfd: i32, name: &str) -> Result<String> {
@@ -375,13 +377,13 @@ pub fn openat_excl(dirfd: i32, name: &str) -> Result<File> {
         )
     };
     if fd < 0 {
-        return Err(io::Error::last_os_error()).context("could not create temp file");
+        return Err(io::Error::last_os_error()).context(t("temp_create"));
     }
     let rc = unsafe { libc::fchmod(fd, 0o600) };
     if rc != 0 {
         let err = io::Error::last_os_error();
         unsafe { libc::close(fd) };
-        return Err(err).context("could not set temp file permissions");
+        return Err(err).context(t("temp_chmod"));
     }
     Ok(unsafe { File::from_raw_fd(fd) })
 }
@@ -409,7 +411,7 @@ pub fn publish_noreplace(dirfd: i32, from: &str, to: &str) -> Result<bool> {
         if err.raw_os_error() == Some(libc::EEXIST) {
             return Ok(false);
         }
-        return Err(err).context("could not save file");
+        return Err(err).context(t("save_file"));
     }
     Ok(true)
 }
@@ -418,7 +420,7 @@ pub fn unlinkat(dirfd: i32, name: &str) -> Result<()> {
     let c = c_name(name)?;
     let rc = unsafe { libc::unlinkat(dirfd, c.as_ptr(), 0) };
     if rc != 0 {
-        return Err(io::Error::last_os_error()).context("unlink");
+        return Err(io::Error::last_os_error()).context(t("unlink_temp"));
     }
     Ok(())
 }
@@ -426,7 +428,7 @@ pub fn unlinkat(dirfd: i32, name: &str) -> Result<()> {
 pub fn fsync_dir(dirfd: i32) -> Result<()> {
     let rc = unsafe { libc::fsync(dirfd) };
     if rc != 0 {
-        return Err(io::Error::last_os_error()).context("fsync save folder");
+        return Err(io::Error::last_os_error()).context(t("fsync_dir"));
     }
     Ok(())
 }

@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{HTML_LANG}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'">
-  <title>Unlock Quick Bridge</title>
+  <title>{{TITLE}}</title>
   <style>
     :root {
       --bg: #111111;
@@ -81,17 +81,17 @@
 <body>
   <main>
     <div class="kicker">Quick Bridge</div>
-    <h1>Enter the desktop code</h1>
-    <p class="lede">The 6-digit password is on the computer that opened this link. It is not in the QR code.</p>
+    <h1>{{H1}}</h1>
+    <p class="lede">{{LEDE}}</p>
     <div class="zone">
       {{ERROR}}
       <form method="post" action="{{UNLOCK_ACTION}}">
         <input type="hidden" name="next" value="{{NEXT}}">
         <input name="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" minlength="6" autocomplete="one-time-code" required autofocus>
-        <button type="submit">Unlock</button>
+        <button type="submit">{{UNLOCK}}</button>
       </form>
     </div>
-    <p class="limit">This link only works while the desktop panel is live.</p>
+    <p class="limit">{{LIMIT}}</p>
   </main>
 </body>
 </html>

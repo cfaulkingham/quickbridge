@@ -13,9 +13,10 @@ use tokio::sync::watch;
 
 use crate::dest::{self, DestDir};
 use crate::event::{self, Event};
+use crate::i18n::{self, fmt, t};
 use crate::gate::{self, Gate, UnlockForm};
 use crate::sanitize::sanitize_filename;
-use crate::util::{constant_time_eq, format_bytes, secure_html};
+use crate::util::{constant_time_eq, format_bytes, html_escape, secure_html};
 
 const PAGE: &str = include_str!("upload.html");
 
@@ -34,17 +35,17 @@ struct Reservation {
 
 impl Reservation {
     fn acquire(state: &AppState) -> Result<Self, String> {
-        let mut used = state.used.lock().map_err(|_| "session busy".to_string())?;
+        let mut used = state.used.lock().map_err(|_| t("session_busy").to_string())?;
         let max_files = if state.stop_after { 1 } else { state.max_files };
         if used.files >= max_files {
-            return Err("session file limit reached".into());
+            return Err(t("session_files").into());
         }
         let bytes = state
             .max_session_bytes
             .saturating_sub(used.bytes)
             .min(state.max_bytes);
         if bytes == 0 {
-            return Err("session size limit reached".into());
+            return Err(t("session_size").into());
         }
         used.files += 1;
         used.bytes += bytes;
@@ -154,9 +155,26 @@ async fn page(
     if !state.gate.is_open(&headers) {
         return gate::page_response(&state.gate, None);
     }
-    let html = PAGE
-        .replace("{{MAX_BYTES}}", &state.max_bytes.to_string())
-        .replace("{{MAX_LABEL}}", &format_bytes(state.max_bytes));
+    let max_label = format_bytes(state.max_bytes);
+    let html = i18n::fill(
+        PAGE,
+        &[
+            ("{{HTML_LANG}}", i18n::html_lang()),
+            ("{{TITLE}}", &html_escape(t("up_title"))),
+            ("{{H1}}", &html_escape(t("up_h1"))),
+            ("{{LEDE}}", &html_escape(t("up_lede"))),
+            ("{{CHOOSE}}", &html_escape(t("up_choose"))),
+            ("{{CHOOSE_HELP}}", &html_escape(t("up_choose_help"))),
+            ("{{PICK}}", &html_escape(t("up_pick"))),
+            ("{{CAMERA}}", &html_escape(t("up_camera"))),
+            (
+                "{{LIMIT}}",
+                &html_escape(&fmt("up_limit", &[("max", &max_label)])),
+            ),
+            ("{{STRINGS}}", &i18n::upload_strings_json()),
+            ("{{MAX_BYTES}}", &state.max_bytes.to_string()),
+        ],
+    );
     secure_html(html)
 }
 
@@ -198,7 +216,7 @@ async fn upload(
             }),
         )
             .into_response(),
-        Ok(None) => json_error(StatusCode::BAD_REQUEST, "no file in request"),
+        Ok(None) => json_error(StatusCode::BAD_REQUEST, t("no_file")),
         Err(message) => json_error(StatusCode::BAD_REQUEST, message),
     }
 }
@@ -222,12 +240,12 @@ async fn save_files(
     mut multipart: Multipart,
 ) -> Result<Option<(String, u64)>, String> {
     {
-        let used = state.used.lock().map_err(|_| "session busy".to_string())?;
+        let used = state.used.lock().map_err(|_| t("session_busy").to_string())?;
         if used.files >= state.max_files {
-            return Err("session file limit reached".into());
+            return Err(t("session_files").into());
         }
         if used.bytes >= state.max_session_bytes {
-            return Err("session size limit reached".into());
+            return Err(t("session_size").into());
         }
     }
 
@@ -235,7 +253,7 @@ async fn save_files(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| format!("invalid upload: {e}"))?
+        .map_err(|e| fmt("invalid_upload", &[("error", &e.to_string())]))?
     {
         let original = match field.file_name() {
             Some(name) if !name.is_empty() => name.chars().take(4096).collect::<String>(),
@@ -262,7 +280,7 @@ async fn save_files(
         let tx = state.shutdown.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-            event::status("stop-after", Some("Stopped after upload".to_string()));
+            event::status("stop-after", Some(t("stop_upload").to_string()));
             let _ = tx.send(true);
         });
     }
@@ -289,22 +307,22 @@ async fn write_field(
             let chunk: Option<Bytes> = field
                 .chunk()
                 .await
-                .map_err(|e| format!("upload interrupted: {e}"))?;
+                .map_err(|e| fmt("upload_interrupted", &[("error", &e.to_string())]))?;
             let Some(chunk) = chunk else { break };
             written = written.saturating_add(chunk.len() as u64);
             if written > max_bytes {
-                return Err(format!("file is larger than {}", format_bytes(max_bytes)));
+                return Err(fmt("file_larger", &[("size", &format_bytes(max_bytes))]));
             }
             file.write_all(&chunk)
                 .await
-                .map_err(|e| format!("write failed: {e}"))?;
+                .map_err(|e| fmt("write_failed", &[("error", &e.to_string())]))?;
         }
         file.flush()
             .await
-            .map_err(|e| format!("write failed: {e}"))?;
+            .map_err(|e| fmt("write_failed", &[("error", &e.to_string())]))?;
         file.sync_all()
             .await
-            .map_err(|e| format!("write failed: {e}"))?;
+            .map_err(|e| fmt("write_failed", &[("error", &e.to_string())]))?;
         Ok(written)
     }
     .await;
@@ -321,7 +339,7 @@ async fn write_field(
             return Ok(Some((final_name, size)));
         }
     }
-    Err("could not reserve an upload filename".into())
+    Err(t("reserve_name").into())
 }
 
 #[cfg(test)]

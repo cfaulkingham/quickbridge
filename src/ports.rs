@@ -11,6 +11,7 @@ use tokio::net::TcpStream;
 
 use crate::dest;
 use crate::event::{self, Event, PortInfo};
+use crate::i18n::{fmt, t};
 
 const PROBE_TIMEOUT: Duration = Duration::from_millis(400);
 const MAX_PORTS: usize = 64;
@@ -302,7 +303,7 @@ async fn probe_http(ip: IpAddr, port: u16) -> Option<String> {
 
 pub async fn confirm_local_http(port: u16) -> Result<SocketAddr> {
     if port == 0 {
-        anyhow::bail!("invalid port");
+        anyhow::bail!("{}", t("invalid_port"));
     }
     if probe_http(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
         .await
@@ -316,7 +317,7 @@ pub async fn confirm_local_http(port: u16) -> Result<SocketAddr> {
     {
         return Ok(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port));
     }
-    anyhow::bail!("nothing HTTP is listening on localhost:{port}")
+    anyhow::bail!("{}", fmt("nothing_http", &[("port", &port.to_string())]))
 }
 
 fn loopback_for(ip: IpAddr) -> IpAddr {

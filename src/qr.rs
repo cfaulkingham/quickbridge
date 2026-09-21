@@ -1,5 +1,7 @@
 use qrcode::{Color, QrCode};
 
+use crate::i18n::t;
+
 const QUIET_ZONE: usize = 4;
 /// Version-40 QR is 177 modules; quiet zone adds 8. Cap the matrix the
 /// panel will turn into a Repeater so a hostile helper cannot OOM the shell.
@@ -13,7 +15,7 @@ pub fn matrix_for(payload: &str) -> anyhow::Result<Vec<String>> {
     let width = code.width();
     let size = width + QUIET_ZONE * 2;
     if size > MAX_QR_SIZE {
-        anyhow::bail!("QR code is too large to render");
+        anyhow::bail!("{}", t("qr_too_large"));
     }
     let mut rows = Vec::with_capacity(size);
     for y in 0..size {

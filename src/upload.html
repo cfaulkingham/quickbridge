@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{HTML_LANG}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'">
-  <title>Send to desktop</title>
+  <title>{{TITLE}}</title>
   <style>
     :root {
       --bg: #111111;
@@ -121,23 +121,24 @@
 <body data-max-bytes="{{MAX_BYTES}}">
   <main>
     <div class="kicker">Quick Bridge</div>
-    <h1>Send a file to this computer</h1>
-    <p class="lede">Photos, PDFs, and documents land in the desktop Downloads folder.</p>
+    <h1>{{H1}}</h1>
+    <p class="lede">{{LEDE}}</p>
     <div class="zone" id="zone">
-      <strong>Choose files from this phone</strong>
-      <p>Camera, files, or the share sheet all work.</p>
+      <strong>{{CHOOSE}}</strong>
+      <p>{{CHOOSE_HELP}}</p>
       <div class="actions">
-        <button class="primary" id="pick" type="button">Choose files</button>
-        <button id="camera" type="button">Take a photo</button>
+        <button class="primary" id="pick" type="button">{{PICK}}</button>
+        <button id="camera" type="button">{{CAMERA}}</button>
       </div>
       <div class="progress" id="bar"><span></span></div>
     </div>
-    <p class="limit">Up to {{MAX_LABEL}} per file. This link only works while the desktop panel is live.</p>
+    <p class="limit">{{LIMIT}}</p>
     <ul class="list" id="list"></ul>
   </main>
   <input id="file-input" type="file" multiple>
   <input id="camera-input" type="file" accept="image/*" capture="environment">
   <script>
+    const i18n = {{STRINGS}};
     const maxBytes = Number(document.body.dataset.maxBytes || 0);
     const list = document.getElementById("list");
     const bar = document.getElementById("bar");
@@ -166,10 +167,10 @@
 
     async function sendFile(file) {
       if (maxBytes && file.size > maxBytes) {
-        addRow(file.name, "too large", "bad");
+        addRow(file.name, i18n.tooLarge, "bad");
         return;
       }
-      const row = addRow(file.name, "sending…");
+      const row = addRow(file.name, i18n.sending);
       bar.style.display = "block";
       fill.style.width = "0%";
       try {
@@ -188,13 +189,13 @@
             if (xhr.status >= 200 && xhr.status < 300 && data.ok) resolve(data);
             else reject(new Error(data.error || ("HTTP " + xhr.status)));
           };
-          xhr.onerror = () => reject(new Error("network error"));
+          xhr.onerror = () => reject(new Error(i18n.network));
           xhr.send(body);
         });
         row.querySelector(".meta").textContent = formatBytes(file.size);
         row.querySelector(".meta").className = "meta ok";
       } catch (err) {
-        row.querySelector(".meta").textContent = err.message || "failed";
+        row.querySelector(".meta").textContent = err.message || i18n.failed;
         row.querySelector(".meta").className = "meta bad";
       } finally {
         fill.style.width = "100%";

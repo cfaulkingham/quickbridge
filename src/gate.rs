@@ -6,6 +6,7 @@ use axum::Json;
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::i18n::{self, t};
 use crate::util::secure_html;
 use crate::util::{constant_time_eq, html_escape};
 
@@ -84,14 +85,14 @@ impl Gate {
 
     pub fn unlock(&self, password: &str) -> Result<HeaderValue, String> {
         if self.inner.is_none() {
-            return Err("no password on this session".into());
+            return Err(t("no_password").into());
         }
         match self.check_pin(password) {
             PinCheck::Ok => Ok(self.cookie_header()),
-            PinCheck::Wrong => Err("wrong password".into()),
-            PinCheck::Locked => Err("too many attempts".into()),
-            PinCheck::Busy => Err("session busy".into()),
-            PinCheck::Off => Err("no password on this session".into()),
+            PinCheck::Wrong => Err(t("wrong_password").into()),
+            PinCheck::Locked => Err(t("too_many").into()),
+            PinCheck::Busy => Err(t("session_busy").into()),
+            PinCheck::Off => Err(t("no_password").into()),
         }
     }
 
@@ -127,9 +128,20 @@ impl Gate {
         let err = error
             .map(|e| format!("<p class=\"bad\">{}</p>", html_escape(e)))
             .unwrap_or_default();
-        PAGE.replace("{{ERROR}}", &err)
-            .replace("{{UNLOCK_ACTION}}", action)
-            .replace("{{NEXT}}", &html_escape(next))
+        i18n::fill(
+            PAGE,
+            &[
+                ("{{HTML_LANG}}", i18n::html_lang()),
+                ("{{TITLE}}", &html_escape(t("gate_title"))),
+                ("{{H1}}", &html_escape(t("gate_h1"))),
+                ("{{LEDE}}", &html_escape(t("gate_lede"))),
+                ("{{UNLOCK}}", &html_escape(t("gate_unlock"))),
+                ("{{LIMIT}}", &html_escape(t("gate_limit"))),
+                ("{{ERROR}}", &err),
+                ("{{UNLOCK_ACTION}}", action),
+                ("{{NEXT}}", &html_escape(next)),
+            ],
+        )
     }
 }
 

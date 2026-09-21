@@ -10,6 +10,7 @@ use axum::Router;
 use tokio::sync::watch;
 
 use crate::event::{self, Event};
+use crate::i18n::{self, fmt, t};
 use crate::gate::{self, Gate, UnlockForm};
 use crate::share::ShareFile;
 use crate::transfer::TransferBody;
@@ -84,11 +85,23 @@ async fn page(
     } else {
         String::new()
     };
-    let html = PAGE
-        .replace("{{NAME}}", &html_escape(&state.share.name))
-        .replace("{{SIZE_LABEL}}", &format_bytes(state.share.size))
-        .replace("{{AUTO}}", if state.stop_after { "1" } else { "0" })
-        .replace("{{PREVIEW}}", &preview);
+    let size_label = format_bytes(state.share.size);
+    let html = i18n::fill(
+        PAGE,
+        &[
+            ("{{HTML_LANG}}", i18n::html_lang()),
+            ("{{TITLE}}", &html_escape(t("dl_title"))),
+            ("{{NAME}}", &html_escape(&state.share.name)),
+            (
+                "{{LEDE}}",
+                &html_escape(&fmt("dl_lede", &[("size", &size_label)])),
+            ),
+            ("{{DOWNLOAD}}", &html_escape(t("dl_button"))),
+            ("{{LIMIT}}", &html_escape(t("dl_limit"))),
+            ("{{AUTO}}", if state.stop_after { "1" } else { "0" }),
+            ("{{PREVIEW}}", &preview),
+        ],
+    );
     secure_html_with_csp(html, CSP)
 }
 
@@ -162,7 +175,7 @@ fn file_response(state: &AppState, inline: bool, head: bool) -> Response {
                     tokio::spawn(async move {
                         // Give Hyper time to flush the final frame before shutting down.
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                        event::status("stop-after", Some("Stopped after download".to_string()));
+                        event::status("stop-after", Some(t("stop_download").to_string()));
                         let _ = completed.shutdown.send(true);
                     });
                 }

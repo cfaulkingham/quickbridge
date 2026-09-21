@@ -1,3 +1,5 @@
+use crate::i18n::t;
+
 /// Allowlisted public origin for a Cloudflare quick tunnel.
 ///
 /// The API hostname is untrusted input. Only a single-label
@@ -7,7 +9,7 @@ pub fn tunnel_origin(raw: &str) -> anyhow::Result<String> {
     let s = raw.trim().trim_end_matches('/');
     let host = s
         .strip_prefix("https://")
-        .ok_or_else(|| anyhow::anyhow!("tunnel URL must be https"))?;
+        .ok_or_else(|| anyhow::anyhow!("{}", t("tunnel_https")))?;
     if host.is_empty()
         || host.contains('/')
         || host.contains('\\')
@@ -20,12 +22,12 @@ pub fn tunnel_origin(raw: &str) -> anyhow::Result<String> {
         || host.contains(' ')
         || host.contains('\0')
     {
-        anyhow::bail!("tunnel URL is not a bare https host");
+        anyhow::bail!("{}", t("tunnel_bare"));
     }
     let host = host.to_ascii_lowercase();
     const SUFFIX: &str = ".trycloudflare.com";
     let Some(sub) = host.strip_suffix(SUFFIX) else {
-        anyhow::bail!("tunnel host is not trycloudflare.com");
+        anyhow::bail!("{}", t("tunnel_host"));
     };
     if sub.is_empty()
         || sub.contains('.')
@@ -36,7 +38,7 @@ pub fn tunnel_origin(raw: &str) -> anyhow::Result<String> {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         || sub.len() > 63
     {
-        anyhow::bail!("tunnel host is not a trycloudflare subdomain");
+        anyhow::bail!("{}", t("tunnel_sub"));
     }
     Ok(format!("https://{host}"))
 }
@@ -44,14 +46,14 @@ pub fn tunnel_origin(raw: &str) -> anyhow::Result<String> {
 pub fn local_origin(raw: &str, port: u16) -> anyhow::Result<String> {
     let expected = format!("http://127.0.0.1:{port}");
     if raw.trim().trim_end_matches('/') != expected {
-        anyhow::bail!("local URL mismatch");
+        anyhow::bail!("{}", t("local_mismatch"));
     }
     Ok(expected)
 }
 
 pub fn session_url(origin: &str, token: &str) -> anyhow::Result<String> {
     if token.len() != 32 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
-        anyhow::bail!("session token is malformed");
+        anyhow::bail!("{}", t("token_bad"));
     }
     Ok(format!("{origin}/s/{token}/"))
 }
@@ -62,10 +64,10 @@ pub fn proxy_url(origin: &str) -> anyhow::Result<String> {
     } else if origin.starts_with("http://127.0.0.1:") {
         let rest = origin.trim().trim_end_matches('/');
         if rest.split(':').nth(2).and_then(|p| p.parse::<u16>().ok()).is_none() {
-            anyhow::bail!("local URL mismatch");
+            anyhow::bail!("{}", t("local_mismatch"));
         }
     } else {
-        anyhow::bail!("proxy origin is not allowed");
+        anyhow::bail!("{}", t("proxy_origin"));
     }
     Ok(format!("{}/", origin.trim().trim_end_matches('/')))
 }

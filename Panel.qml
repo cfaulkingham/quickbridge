@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "I18n.js" as I18n
 
 Panel {
   id: root
@@ -34,6 +35,7 @@ Panel {
   readonly property bool hasHistory: root.uploads.length > 0 || root.downloads.length > 0
   property var ports: []
   property string portsMessage: ""
+  property bool portsScanOpen: false
   property string stdoutBuf: ""
   property bool stdoutOverflow: false
   property string portsBuf: ""
@@ -51,6 +53,8 @@ Panel {
   readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property color dim: Qt.darker(contentForeground, 1.5)
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property string lang: I18n.language(Qt.locale().name, setting("language", ""))
+  readonly property string uiFont: I18n.uiFont(root.lang, contentFontFamily)
   readonly property string home: Quickshell.env("HOME") || ""
   readonly property bool sessionLive: desiredOn && ready && serverProc.running
   readonly property bool connecting: desiredOn && !ready && lastError === ""
@@ -127,6 +131,7 @@ Panel {
       "WAYLAND_DISPLAY": Quickshell.env("WAYLAND_DISPLAY") || "",
       "LANG": Quickshell.env("LANG") || "C.UTF-8",
       "LC_ALL": "C.UTF-8",
+      "QUICKBRIDGE_LANG": root.lang,
       "CARGO_TERM_COLOR": "never"
     }
     var extras = ["SSL_CERT_FILE", "SSL_CERT_DIR", "CARGO_HOME", "RUSTUP_HOME"]
@@ -142,7 +147,8 @@ Panel {
     "XDG_RUNTIME_DIR": Quickshell.env("XDG_RUNTIME_DIR") || "",
     "WAYLAND_DISPLAY": Quickshell.env("WAYLAND_DISPLAY") || "",
     "XDG_SESSION_TYPE": Quickshell.env("XDG_SESSION_TYPE") || "",
-    "LANG": "C.UTF-8"
+    "LANG": "C.UTF-8",
+    "QUICKBRIDGE_LANG": root.lang
   })
   readonly property var portalEnv: {
     var env = {
@@ -159,54 +165,80 @@ Panel {
     return env
   }
   readonly property string progressLabel: Math.round(Math.max(0, Math.min(1, root.progress)) * 100) + "%"
+  function t(key) {
+    return I18n.tr(root.lang, key)
+  }
+
+  function tf(key, vars) {
+    return I18n.fmt(root.lang, key, vars)
+  }
+
+  function portText(p) {
+    if (!p) return ""
+    var bits = [":" + p.port]
+    if (p.title) bits.push(p.title)
+    else if (p.name) bits.push(p.name)
+    if (p.bind && p.bind !== "localhost" && p.bind !== "")
+      bits.push(p.bind === "all" ? root.t("bind.all") : p.bind)
+    return bits.join("  ")
+  }
+
+  function located(text) {
+    var loc = root.location
+    if (loc === "" || loc === "local") return text
+    if (loc === "edge") loc = root.t("location.edge")
+    return root.tf("footer.with_location", { text: text, location: loc })
+  }
+
   readonly property string modeLabel: {
-    if (root.mode === "download") return "Download"
-    if (root.mode === "proxy") return "Proxy"
-    return "Upload"
+    if (root.mode === "download") return root.t("mode.download")
+    if (root.mode === "proxy") return root.t("mode.proxy")
+    return root.t("mode.upload")
   }
   readonly property string heroMeta: {
-    if (root.lastError !== "") return "Failed"
-    if (root.sessionLive) return "Live"
-    if (root.compiling) return "Building"
-    if (root.connecting) return "Connecting"
-    return "Idle"
+    if (root.lastError !== "") return root.t("hero.failed")
+    if (root.sessionLive) return root.t("hero.live")
+    if (root.compiling) return root.t("hero.building")
+    if (root.connecting) return root.t("hero.connecting")
+    return root.t("hero.idle")
   }
   readonly property string statusText: {
     if (root.lastError !== "") return root.lastError
     if (root.compiling) {
       var build = root.statusMessage !== ""
         ? root.statusMessage
-        : "Building helper…"
+        : root.t("status.building")
       return build + "  " + root.progressLabel
     }
     if (root.connecting) {
-      var msg = root.statusMessage !== "" ? root.statusMessage : "Opening the tunnel…"
+      var msg = root.statusMessage !== "" ? root.statusMessage : root.t("status.opening")
       return msg + "  " + root.progressLabel
     }
     if (root.sessionLive) {
-      if (root.mode === "download") return "Scan to download on your phone"
-      if (root.mode === "proxy") return "Scan to open this local HTTP port"
-      return "Scan to upload from your phone"
+      if (root.mode === "download") return root.t("status.scan_download")
+      if (root.mode === "proxy") return root.t("status.scan_proxy")
+      return root.t("status.scan_upload")
     }
     if (root.mode === "download")
       return root.shareName !== ""
-        ? "Sharing " + root.shareName + " — turn on to get a QR code"
-        : "Pick a file or the clipboard, then turn on"
+        ? root.tf("status.sharing_ready", { name: root.shareName })
+        : root.t("status.pick_first")
     if (root.mode === "proxy")
-      return "Choose a local HTTP port to share"
-    return "Turn on to get a QR code and link"
+      return root.t("status.choose_port")
+    return root.t("status.turn_on")
   }
   readonly property bool showingQr: root.sessionLive && root.qrSize > 0
   readonly property string footerText: {
     if (root.mode === "proxy" && root.proxyPort > 0)
-      return "Proxying localhost:" + root.proxyPort
-        + (root.location !== "" && root.location !== "local" ? " · " + root.location : "")
+      return root.located(root.tf("footer.proxy", { port: root.proxyPort }))
     if (root.mode === "download" && (root.dest !== "" || root.shareName !== ""))
-      return "Sharing " + Model.homeRelative(root.dest || root.shareName, root.home)
-        + (root.location !== "" && root.location !== "local" ? " · " + root.location : "")
+      return root.located(root.tf("footer.sharing", {
+        path: Model.homeRelative(root.dest || root.shareName, root.home)
+      }))
     if (root.dest !== "")
-      return "Saving to " + Model.homeRelative(root.dest, root.home)
-        + (root.location !== "" && root.location !== "local" ? " · " + root.location : "")
+      return root.located(root.tf("footer.saving", {
+        path: Model.homeRelative(root.dest, root.home)
+      }))
     return ""
   }
 
@@ -323,7 +355,7 @@ Panel {
     root.ready = false
     root.location = ""
     root.statusState = "starting"
-    root.statusMessage = "Starting…"
+    root.statusMessage = root.t("status.starting")
     root.progress = 0.06
     root.forgetSessionSecrets()
     root.expectedStop = false
@@ -341,16 +373,16 @@ Panel {
 
   function startSession() {
     if (root.helperPath === "") {
-      root.lastError = "Plugin helper is missing"
+      root.lastError = root.t("error.helper_missing")
       return
     }
     if (root.mode === "download" && Model.fileArg(root.sharePath) === "") {
-      root.lastError = "Pick a file or the clipboard first"
+      root.lastError = root.t("error.need_file")
       root.desiredOn = false
       return
     }
     if (root.mode === "proxy" && Model.portArg(root.proxyPort) === 0) {
-      root.lastError = "Choose a local HTTP port first"
+      root.lastError = root.t("error.need_port")
       root.desiredOn = false
       return
     }
@@ -391,7 +423,7 @@ Panel {
     if (root.stdoutBuf.length + piece.length > Model.MAX_STDOUT) {
       root.stdoutOverflow = true
       root.stdoutBuf = ""
-      root.lastError = "Helper output was too large"
+      root.lastError = root.t("error.output_large")
       root.expectedStop = true
       root.killHelper()
       return
@@ -402,7 +434,7 @@ Panel {
     if (root.stdoutBuf.length > Model.MAX_STDOUT) {
       root.stdoutOverflow = true
       root.stdoutBuf = ""
-      root.lastError = "Helper output was too large"
+      root.lastError = root.t("error.output_large")
       root.expectedStop = true
       root.killHelper()
       return
@@ -440,7 +472,7 @@ Panel {
       return
     }
     if (ev.event === "error") {
-      root.lastError = Model.plain(ev.message, Model.MAX_MESSAGE) || "Quick Bridge failed"
+      root.lastError = Model.plain(ev.message, Model.MAX_MESSAGE) || root.t("error.failed")
       root.ready = false
       if (root.statusState === "building") {
         root.statusState = ""
@@ -465,15 +497,15 @@ Panel {
       root.lastError = root.ready
         ? ""
         : (root.requirePassword && root.sessionPassword === ""
-          ? "Helper did not return a password"
-          : "Could not render the QR code")
+          ? root.t("error.no_password")
+          : root.t("error.qr"))
       root.statusMessage = ""
       if (root.ready) root.progress = 1
       return
     }
     if (ev.event === "upload") {
       var entry = {
-        name: Model.plain(ev.name, Model.MAX_NAME) || "file",
+        name: Model.plain(ev.name, Model.MAX_NAME) || root.t("name.file"),
         path: Model.plain(ev.path, Model.MAX_PATH),
         size: Number(ev.size || 0)
       }
@@ -482,12 +514,12 @@ Panel {
       for (var i = 0; i < root.uploads.length && next.length < 8; i++)
         next.push(root.uploads[i])
       root.uploads = next
-      root.notifyTransfer("Received " + entry.name)
+      root.notifyTransfer(root.tf("notify.received", { name: entry.name }))
       return
     }
     if (ev.event === "download") {
       var sent = {
-        name: Model.plain(ev.name, Model.MAX_NAME) || "file",
+        name: Model.plain(ev.name, Model.MAX_NAME) || root.t("name.file"),
         size: Number(ev.size || 0)
       }
       if (!isFinite(sent.size) || sent.size < 0) sent.size = 0
@@ -495,7 +527,10 @@ Panel {
       for (var j = 0; j < root.downloads.length && dl.length < 8; j++)
         dl.push(root.downloads[j])
       root.downloads = dl
-      root.notifyTransfer("Sent " + sent.name)
+      root.notifyTransfer(root.tf("history.sent", {
+        name: sent.name,
+        size: Model.formatBytes(sent.size)
+      }))
     }
   }
 
@@ -565,7 +600,7 @@ Panel {
     if (root.busy || pickProc.running) return
     root.pickerBuf = ""
     root.lastError = ""
-    pickProc.command = ["/usr/bin/omarchy-file-select", "--title", "Share with Quick Bridge"]
+    pickProc.command = ["/usr/bin/omarchy-file-select", "--title", root.t("picker.title")]
     pickDeadline.restart()
     pickProc.running = true
   }
@@ -589,7 +624,8 @@ Panel {
       portsProc.running = false
     }
     root.portsBuf = ""
-    root.portsMessage = "Looking for local HTTP ports…"
+    root.portsScanOpen = true
+    root.portsMessage = root.t("ports.looking")
     if (!root.desiredOn) root.lastError = ""
     portsProc.command = root.helperPrefix().concat(["ports"])
     portsDeadline.restart()
@@ -618,8 +654,10 @@ Panel {
   }
 
   function ingestPorts(chunk) {
-    if (!root.ingestCapped("ports", chunk, Model.MAX_STDOUT, "Port list was too large", portsProc, portsKill))
+    if (!root.ingestCapped("ports", chunk, Model.MAX_STDOUT, root.t("ports.too_large"), portsProc, portsKill)) {
+      root.portsScanOpen = false
       return
+    }
     var parts = root.portsBuf.split("\n")
     root.portsBuf = parts.pop()
     for (var i = 0; i < parts.length; i++) {
@@ -628,8 +666,9 @@ Panel {
       if (!ev || !ev.event) continue
       if (ev.event === "ports") {
         root.ports = Model.parsePorts(ev.ports)
+        root.portsScanOpen = false
         root.portsMessage = root.ports.length === 0
-          ? "No local HTTP servers found"
+          ? root.t("ports.none")
           : ""
         root.clearBuilding()
       } else if (ev.event === "status" || ev.event === "error") {
@@ -670,7 +709,7 @@ Panel {
       if (!wasExpected && root.desiredOn && exitCode !== 0 && root.lastError === "") {
         root.lastError = root.lastStderr !== ""
           ? root.lastStderr
-          : "Quick Bridge stopped unexpectedly"
+          : root.t("error.stopped")
       }
       root.resetIo()
       // Helper is gone: the switch and bar icon follow, even if the panel
@@ -697,8 +736,9 @@ Panel {
       portsKill.stop()
       portsDeadline.stop()
       if (!serverProc.running) root.clearBuilding()
-      if (root.ports.length === 0 && root.portsMessage === "Looking for local HTTP ports…")
-        root.portsMessage = "No local HTTP servers found"
+      if (root.portsScanOpen && root.ports.length === 0)
+        root.portsMessage = root.t("ports.none")
+      root.portsScanOpen = false
     }
   }
 
@@ -709,7 +749,7 @@ Panel {
     stdout: SplitParser {
       splitMarker: ""
       onRead: function(chunk) {
-        root.ingestCapped("pick", chunk, Model.MAX_PICKER, "File picker output was too large", pickProc, pickKill)
+        root.ingestCapped("pick", chunk, Model.MAX_PICKER, root.t("error.picker_large"), pickProc, pickKill)
       }
     }
     stderr: SplitParser { splitMarker: ""; onRead: function() {} }
@@ -722,7 +762,7 @@ Panel {
       if (path === "") return
       var parts = path.split("/")
       root.sharePath = path
-      root.shareName = Model.plain(parts[parts.length - 1] || "file", Model.MAX_NAME)
+      root.shareName = Model.plain(parts[parts.length - 1] || root.t("name.file"), Model.MAX_NAME)
       root.shareKind = "file"
       root.shareEphemeral = false
       root.startSession()
@@ -736,7 +776,7 @@ Panel {
     stdout: SplitParser {
       splitMarker: ""
       onRead: function(chunk) {
-        root.ingestCapped("snap", chunk, Model.MAX_PICKER, "Clipboard snapshot output was too large", snapProc, snapKill)
+        root.ingestCapped("snap", chunk, Model.MAX_PICKER, root.t("error.clipboard_large"), snapProc, snapKill)
       }
     }
     stderr: SplitParser { splitMarker: ""; onRead: function() {} }
@@ -750,17 +790,17 @@ Panel {
         var ev = Model.parseEvent(lines[i])
         if (!ev || !ev.event) continue
         if (ev.event === "error") {
-          root.lastError = Model.plain(ev.message, Model.MAX_MESSAGE) || "Clipboard is empty"
+          root.lastError = Model.plain(ev.message, Model.MAX_MESSAGE) || root.t("error.clipboard_empty")
           return
         }
         if (ev.event === "snapshot") {
           var path = Model.fileArg(ev.path)
           if (path === "") {
-            root.lastError = "Clipboard snapshot failed"
+            root.lastError = root.t("error.clipboard_failed")
             return
           }
           root.sharePath = path
-          root.shareName = Model.plain(ev.name, Model.MAX_NAME) || "clipboard"
+          root.shareName = Model.plain(ev.name, Model.MAX_NAME) || root.t("name.clipboard")
           root.shareKind = Model.plain(ev.kind, 16) || "file"
           root.shareEphemeral = true
           root.startSession()
@@ -768,7 +808,7 @@ Panel {
         }
       }
       if (exitCode !== 0 && root.lastError === "")
-        root.lastError = "Clipboard is empty"
+        root.lastError = root.t("error.clipboard_empty")
     }
   }
 
@@ -814,7 +854,7 @@ Panel {
     id: pickDeadline
     interval: 10 * 60 * 1000
     onTriggered: {
-      root.lastError = "Timed out picking a file"
+      root.lastError = root.t("error.pick_timeout")
       if (pickProc.running) {
         pickProc.signal(15)
         pickKill.restart()
@@ -826,7 +866,7 @@ Panel {
     id: snapDeadline
     interval: 8000
     onTriggered: {
-      root.lastError = "Timed out reading the clipboard"
+      root.lastError = root.t("error.clipboard_timeout")
       if (snapProc.running) {
         snapProc.signal(15)
         snapKill.restart()
@@ -838,7 +878,8 @@ Panel {
     id: portsDeadline
     interval: 10 * 60 * 1000
     onTriggered: {
-      root.portsMessage = "Timed out looking for HTTP ports"
+      root.portsScanOpen = false
+      root.portsMessage = root.t("ports.timeout")
       if (portsProc.running) {
         portsProc.signal(15)
         portsKill.restart()
@@ -852,7 +893,7 @@ Panel {
     interval: 10 * 60 * 1000
     onTriggered: {
       if (!root.connecting) return
-      root.lastError = "Timed out starting Quick Bridge"
+      root.lastError = root.t("error.launch_timeout")
       root.expectedStop = true
       root.killHelper()
     }
@@ -896,7 +937,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(300))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
@@ -936,7 +977,7 @@ Panel {
             meta: root.heroMeta
             detail: root.busy ? root.modeLabel : ""
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             iconOpacity: root.sessionOn ? 1.0 : 0.55
             iconComponent: Component {
               Text {
@@ -956,7 +997,7 @@ Panel {
 
                 PanelToolTip {
                   visible: powerSwitch.containsMouse
-                  text: header.powerOn ? "Stop the tunnel" : "Start the tunnel"
+                  text: header.powerOn ? root.t("tooltip.stop") : root.t("tooltip.start")
                   fontFamily: hero.fontFamily
                 }
               }
@@ -970,7 +1011,7 @@ Panel {
           text: root.statusText
           textFormat: Text.PlainText
           color: root.lastError !== "" ? root.urgent : root.dim
-          font.family: root.contentFontFamily
+          font.family: root.uiFont
           font.pixelSize: Style.font.bodySmall
           font.bold: root.lastError !== ""
           wrapMode: Text.WordWrap
@@ -1016,29 +1057,32 @@ Panel {
 
           Button {
             width: (parent.width - parent.spacing * 2) / 3
-            text: "Upload"
+            text: root.t("mode.upload")
+            fontSize: Style.font.bodySmall
             selected: root.mode === "upload"
             bordered: true
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             onClicked: root.setMode("upload")
           }
           Button {
             width: (parent.width - parent.spacing * 2) / 3
-            text: "Download"
+            text: root.t("mode.download")
+            fontSize: Style.font.bodySmall
             selected: root.mode === "download"
             bordered: true
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             onClicked: root.setMode("download")
           }
           Button {
             width: (parent.width - parent.spacing * 2) / 3
-            text: "Proxy"
+            text: root.t("mode.proxy")
+            fontSize: Style.font.bodySmall
             selected: root.mode === "proxy"
             bordered: true
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             onClicked: root.setMode("proxy")
           }
         }
@@ -1046,13 +1090,13 @@ Panel {
         Toggle {
           visible: !root.showingQr && !root.inProgress
           width: parent.width
-          label: "Require password"
+          label: root.t("password.label")
           description: root.mode === "proxy"
-            ? "Proxy always requires a 6-digit code shown here — not in the QR."
-            : "Phone types a 6-digit code shown here — not in the QR."
+            ? root.t("password.proxy")
+            : root.t("password.other")
           checked: root.mode === "proxy" ? true : root.requirePassword
           foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
+          fontFamily: root.uiFont
           onClicked: {
             if (root.busy || root.mode === "proxy") return
             root.requirePassword = !root.requirePassword
@@ -1062,13 +1106,13 @@ Panel {
         Toggle {
           visible: root.mode !== "proxy" && !root.showingQr && !root.inProgress
           width: parent.width
-          label: "Stop after transfer"
+          label: root.t("stop.label")
           description: root.mode === "download"
-            ? "Tear down the tunnel after the phone downloads the file"
-            : "Tear down the tunnel after the first file arrives"
+            ? root.t("stop.download")
+            : root.t("stop.upload")
           checked: root.stopAfter
           foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
+          fontFamily: root.uiFont
           onClicked: if (!root.busy) root.stopAfter = !root.stopAfter
         }
 
@@ -1079,18 +1123,20 @@ Panel {
 
           Button {
             width: (parent.width - parent.spacing) / 2
-            text: "Share a file"
+            text: root.t("share.file")
+            fontSize: Style.font.bodySmall
             bordered: true
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             onClicked: root.pickFile()
           }
           Button {
             width: (parent.width - parent.spacing) / 2
-            text: "Share clipboard"
+            text: root.t("share.clipboard")
+            fontSize: Style.font.bodySmall
             bordered: true
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             onClicked: root.snapshotClipboard()
           }
         }
@@ -1098,10 +1144,10 @@ Panel {
         Button {
           visible: root.mode === "proxy" && !root.showingQr && !root.inProgress
           width: parent.width
-          text: portsProc.running ? "Scanning…" : "Refresh ports"
+          text: portsProc.running ? root.t("ports.scanning") : root.t("ports.refresh")
           bordered: true
           foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
+          fontFamily: root.uiFont
           onClicked: root.listPorts()
         }
 
@@ -1111,7 +1157,7 @@ Panel {
           text: root.portsMessage
           textFormat: Text.PlainText
           color: root.dim
-          font.family: root.contentFontFamily
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
           font.bold: false
           wrapMode: Text.WordWrap
@@ -1123,12 +1169,12 @@ Panel {
           Button {
             required property var modelData
             width: content.width
-            text: Model.portLabel(modelData)
+            text: root.portText(modelData)
             selected: root.proxyPort === modelData.port
             bordered: true
             leftAlign: true
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             onClicked: root.startProxy(modelData.port)
           }
         }
@@ -1180,7 +1226,7 @@ Panel {
           text: Model.formatPin(root.sessionPassword)
           textFormat: Text.PlainText
           color: root.contentForeground
-          font.family: root.contentFontFamily
+          font.family: root.uiFont
           font.pixelSize: Style.font.display
           font.bold: true
           horizontalAlignment: Text.AlignHCenter
@@ -1189,10 +1235,10 @@ Panel {
         Text {
           visible: root.showingQr && root.sessionPassword !== ""
           width: parent.width
-          text: "Type this on the phone after scanning"
+          text: root.t("pin.hint")
           textFormat: Text.PlainText
           color: root.dim
-          font.family: root.contentFontFamily
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
           horizontalAlignment: Text.AlignHCenter
@@ -1204,7 +1250,7 @@ Panel {
           text: root.url
           textFormat: Text.PlainText
           color: root.contentForeground
-          font.family: root.contentFontFamily
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
           wrapMode: Text.WrapAnywhere
           horizontalAlignment: Text.AlignHCenter
@@ -1223,20 +1269,22 @@ Panel {
 
           Button {
             width: root.mode === "upload" ? (parent.width - parent.spacing) / 2 : parent.width
-            text: "Copy link"
+            text: root.t("copy")
+            fontSize: Style.font.bodySmall
             bordered: true
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             onClicked: root.copyUrl()
           }
 
           Button {
             visible: root.mode === "upload"
             width: (parent.width - parent.spacing) / 2
-            text: "Open folder"
+            text: root.t("open_folder")
+            fontSize: Style.font.bodySmall
             bordered: true
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             onClicked: root.openDest()
           }
         }
@@ -1245,11 +1293,11 @@ Panel {
           visible: root.showingQr
           width: parent.width
           text: root.mode === "proxy"
-            ? "Anyone with the link can use that local HTTP service until you stop."
-            : "If the phone page fails at first, wait a few seconds and retry."
+            ? root.t("qr.proxy_warning")
+            : root.t("qr.retry")
           textFormat: Text.PlainText
           color: root.dim
-          font.family: root.contentFontFamily
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
         }
@@ -1260,7 +1308,7 @@ Panel {
           text: root.footerText
           textFormat: Text.PlainText
           color: root.dim
-          font.family: root.contentFontFamily
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
           wrapMode: Text.WrapAnywhere
         }
@@ -1279,19 +1327,19 @@ Panel {
             id: recentLabel
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: "Recent"
+            text: root.t("recent")
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
           }
 
           Text {
             id: clearHint
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: "x  Clear"
+            text: root.t("clear")
             textFormat: Text.PlainText
             color: root.dim
-            font.family: root.contentFontFamily
+            font.family: root.uiFont
             font.pixelSize: Style.font.caption
 
             MouseArea {
@@ -1305,8 +1353,8 @@ Panel {
 
             PanelToolTip {
               visible: clearHintMouse.containsMouse
-              text: "Files on disk are not deleted."
-              fontFamily: root.contentFontFamily
+              text: root.t("clear.tip")
+              fontFamily: root.uiFont
             }
           }
         }
@@ -1319,7 +1367,7 @@ Panel {
             width: content.width
             text: Model.plain(modelData.name, Model.MAX_NAME) + "  " + Model.formatBytes(modelData.size)
             foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
+            fontFamily: root.uiFont
             leftAlign: true
             onClicked: root.openUpload(modelData.path)
           }
@@ -1331,10 +1379,13 @@ Panel {
           Text {
             required property var modelData
             width: content.width
-            text: "Sent " + Model.plain(modelData.name, Model.MAX_NAME) + "  " + Model.formatBytes(modelData.size)
+            text: root.tf("history.sent", {
+              name: Model.plain(modelData.name, Model.MAX_NAME),
+              size: Model.formatBytes(modelData.size)
+            })
             textFormat: Text.PlainText
             color: root.dim
-            font.family: root.contentFontFamily
+            font.family: root.uiFont
             font.pixelSize: Style.font.caption
           }
         }
@@ -1345,10 +1396,10 @@ Panel {
 
         Text {
           width: parent.width
-          text: "Powered By: Cloudflare Quick Tunnels"
+          text: root.t("powered")
           textFormat: Text.PlainText
           color: root.dim
-          font.family: root.contentFontFamily
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
 
@@ -1360,8 +1411,8 @@ Panel {
 
             PanelToolTip {
               visible: parent.containsMouse
-              text: "Opens trycloudflare.com"
-              fontFamily: root.contentFontFamily
+              text: root.t("powered.tip")
+              fontFamily: root.uiFont
             }
           }
         }

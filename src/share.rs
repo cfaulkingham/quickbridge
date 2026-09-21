@@ -16,6 +16,7 @@ use axum::body::{Body, Bytes};
 use hyper::body::{Body as HttpBody, Frame, SizeHint};
 
 use crate::dest;
+use crate::i18n::{fmt, t};
 use crate::sanitize::sanitize_filename;
 
 const CLIPBOARD_CAP: u64 = 32 * 1024 * 1024;
@@ -136,10 +137,10 @@ impl HttpBody for FileBody {
 
 pub fn open_file(path: PathBuf, max_bytes: u64, ephemeral: bool) -> Result<ShareFile> {
     if !path.is_absolute() {
-        bail!("file path must be absolute");
+        bail!("{}", t("path_absolute"));
     }
     if path.as_os_str().as_bytes().contains(&0) {
-        bail!("file path contains NUL");
+        bail!("{}", t("path_nul"));
     }
     let name = path
         .file_name()
@@ -148,20 +149,20 @@ pub fn open_file(path: PathBuf, max_bytes: u64, ephemeral: bool) -> Result<Share
     let name = sanitize_filename(name);
 
     let file = open_nofollow(&path)?;
-    let meta = file.metadata().context("stat shared file")?;
+    let meta = file.metadata().context(t("stat_shared"))?;
     if !meta.is_file() {
-        bail!("that path is not a regular file");
+        bail!("{}", t("not_regular"));
     }
     if meta.uid() != dest::euid() {
-        bail!("file is not owned by you");
+        bail!("{}", t("not_owner"));
     }
     if meta.len() == 0 {
-        bail!("file is empty");
+        bail!("{}", t("file_empty"));
     }
     if meta.len() > max_bytes {
         bail!(
-            "file is larger than {}",
-            crate::util::format_bytes(max_bytes)
+            "{}",
+            fmt("file_larger", &[("size", &crate::util::format_bytes(max_bytes))])
         );
     }
 
@@ -199,7 +200,7 @@ pub fn capture_clipboard(max_bytes: u64) -> Result<ShareFile> {
         };
     let bytes = wl_paste_bytes(args, cap)?;
     if bytes.is_empty() {
-        bail!("clipboard is empty");
+        bail!("{}", t("clip_empty"));
     }
     let mime = mime_for(name, Some(&bytes));
     let name = if mime.starts_with("image/") {
@@ -234,15 +235,15 @@ fn wl_paste_bytes(args: &[&str], cap: u64) -> Result<Vec<u8>> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .context("could not read the clipboard (wl-paste)")?;
-    let mut stdout = child.stdout.take().context("clipboard stdout")?;
+        .context(t("clip_wl"))?;
+    let mut stdout = child.stdout.take().context(t("clip_stdout"))?;
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
     let start = std::time::Instant::now();
     loop {
         if start.elapsed() > Duration::from_secs(2) {
             let _ = child.kill();
-            bail!("clipboard read timed out");
+            bail!("{}", t("clip_timeout"));
         }
         match stdout.read(&mut chunk) {
             Ok(0) => break,
@@ -250,8 +251,8 @@ fn wl_paste_bytes(args: &[&str], cap: u64) -> Result<Vec<u8>> {
                 if buf.len() as u64 + n as u64 > cap {
                     let _ = child.kill();
                     bail!(
-                        "clipboard is larger than {}",
-                        crate::util::format_bytes(cap)
+                        "{}",
+                        fmt("clip_larger", &[("size", &crate::util::format_bytes(cap))])
                     );
                 }
                 buf.extend_from_slice(&chunk[..n]);
@@ -259,7 +260,7 @@ fn wl_paste_bytes(args: &[&str], cap: u64) -> Result<Vec<u8>> {
             Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
             Err(err) => {
                 let _ = child.kill();
-                return Err(err).context("clipboard read failed");
+                return Err(err).context(t("clip_failed"));
             }
         }
     }
@@ -268,7 +269,7 @@ fn wl_paste_bytes(args: &[&str], cap: u64) -> Result<Vec<u8>> {
 }
 
 fn open_nofollow(path: &Path) -> Result<File> {
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).context("path contains NUL")?;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).context(t("path_nul_generic"))?;
     let fd = unsafe {
         libc::open(
             c.as_ptr(),
@@ -276,18 +277,18 @@ fn open_nofollow(path: &Path) -> Result<File> {
         )
     };
     if fd < 0 {
-        return Err(io::Error::last_os_error()).context("could not open file");
+        return Err(io::Error::last_os_error()).context(t("open_file"));
     }
     let file = unsafe { File::from_raw_fd(fd) };
-    let meta = file.metadata().context("stat shared file")?;
+    let meta = file.metadata().context(t("stat_shared"))?;
     if !meta.is_file() {
-        bail!("that path is not a regular file");
+        bail!("{}", t("not_regular"));
     }
     if meta.nlink() != 1 {
-        bail!("refusing a hard-linked file");
+        bail!("{}", t("hard_link"));
     }
     if meta.uid() != dest::euid() {
-        bail!("file is not owned by you");
+        bail!("{}", t("not_owner"));
     }
     set_blocking(file.as_raw_fd())?;
     Ok(file)
@@ -296,18 +297,18 @@ fn open_nofollow(path: &Path) -> Result<File> {
 fn set_blocking(fd: i32) -> Result<()> {
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
     if flags < 0 {
-        return Err(io::Error::last_os_error()).context("fcntl getfl");
+        return Err(io::Error::last_os_error()).context(t("fcntl_get"));
     }
     let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) };
     if rc != 0 {
-        return Err(io::Error::last_os_error()).context("fcntl setfl");
+        return Err(io::Error::last_os_error()).context(t("fcntl_set"));
     }
     Ok(())
 }
 
 fn real_path(fd: i32) -> Result<PathBuf> {
     let link = format!("/proc/self/fd/{fd}");
-    std::fs::read_link(&link).context("resolve file path")
+    std::fs::read_link(&link).context(t("resolve_file"))
 }
 
 pub fn mime_for(name: &str, bytes: Option<&[u8]>) -> String {

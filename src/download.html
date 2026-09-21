@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{HTML_LANG}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'">
-  <title>Download from desktop</title>
+  <title>{{TITLE}}</title>
   <style>
     :root {
       --bg: #111111;
@@ -92,12 +92,12 @@
   <main>
     <div class="kicker">Quick Bridge</div>
     <h1>{{NAME}}</h1>
-    <p class="lede">{{SIZE_LABEL}} from the desktop. This link only works while the panel is live.</p>
+    <p class="lede">{{LEDE}}</p>
     <div class="zone">
       {{PREVIEW}}
-      <a class="btn" id="dl" href="file" download>Download</a>
+      <a class="btn" id="dl" href="file" download>{{DOWNLOAD}}</a>
     </div>
-    <p class="limit">If the download does not start, tap the button.</p>
+    <p class="limit">{{LIMIT}}</p>
   </main>
   <script>
     if (document.body.dataset.auto === "1") {

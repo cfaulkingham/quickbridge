@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Ui
+import "I18n.js" as I18n
 
 BarWidget {
   id: root
@@ -15,6 +16,7 @@ BarWidget {
   readonly property string liveMode: panelLoader.item
     ? String(panelLoader.item.mode || "upload")
     : "upload"
+  readonly property string lang: I18n.language(Qt.locale().name, setting("language", ""))
 
   function open() {
     if (panelLoader.item) panelLoader.item.open()
@@ -65,8 +67,10 @@ BarWidget {
     text: "󰢹"
     active: root.sessionOn
     tooltipText: root.sessionOn
-      ? ("Quick Bridge · " + root.liveMode + " live")
-      : "Quick Bridge"
+      ? I18n.fmt(root.lang, "bar.live", {
+          mode: I18n.tr(root.lang, "mode." + root.liveMode)
+        })
+      : I18n.tr(root.lang, "bar.idle")
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) {
         if (panelLoader.item) panelLoader.item.stopSession()

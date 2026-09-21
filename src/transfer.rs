@@ -6,6 +6,8 @@ use std::task::{Context, Poll};
 use axum::body::{Body, Bytes};
 use hyper::body::{Body as HttpBody, Frame, SizeHint};
 use tokio::sync::{watch, OwnedSemaphorePermit};
+
+use crate::i18n::t;
 use tokio::time::{Instant, Sleep};
 
 /// The server also enforces the deadline on the socket, since downstream
@@ -106,7 +108,7 @@ impl HttpBody for TransferBody {
         }
         if let Some(deadline) = &mut self.deadline {
             if deadline.as_mut().poll(cx).is_ready() {
-                return self.error(io::ErrorKind::TimedOut, "proxy transfer timed out");
+                return self.error(io::ErrorKind::TimedOut, t("proxy_timeout"));
             }
         }
         match std::task::ready!(Pin::new(&mut self.inner).poll_frame(cx)) {
@@ -115,7 +117,7 @@ impl HttpBody for TransferBody {
                     let Some(left) = remaining.checked_sub(data.len() as u64) else {
                         return self.error(
                             io::ErrorKind::InvalidData,
-                            "download exceeded its declared size",
+                            t("download_over"),
                         );
                     };
                     *remaining = left;
@@ -137,7 +139,7 @@ impl HttpBody for TransferBody {
                 if self.remaining.is_some_and(|n| n != 0) {
                     return self.error(
                         io::ErrorKind::UnexpectedEof,
-                        "download ended before its declared size",
+                        t("download_short"),
                     );
                 }
                 self.finish(true);

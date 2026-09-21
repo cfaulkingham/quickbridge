@@ -37,7 +37,8 @@
       "maxMb": 100,
       "idleMinutes": 15,
       "stopAfter": false,
-      "requirePassword": false
+      "requirePassword": false,
+      "language": "system"
     },
     "schema": [
       {
@@ -78,6 +79,14 @@
         "label": "Require password",
         "defaultValue": false,
         "description": "Default for upload/download. Proxy always requires a 6-digit code shown on the desktop. The code is not in the QR or the link."
+      },
+      {
+        "key": "language",
+        "type": "enum",
+        "label": "Language",
+        "options": ["system", "en", "es", "fr", "de", "zh", "ja", "ko", "hi"],
+        "defaultValue": "system",
+        "description": "system follows the desktop locale. en English, es Spanish, fr French, de German, zh Mandarin (Simplified), ja Japanese, ko Korean, hi Hindi."
       }
     ]
   }

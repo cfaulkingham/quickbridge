@@ -2,6 +2,7 @@ mod dest;
 mod download;
 mod event;
 mod gate;
+mod i18n;
 mod ports;
 mod proxy;
 mod public_url;
@@ -117,6 +118,7 @@ struct ServeArgs {
 
 #[tokio::main]
 async fn main() {
+    i18n::init();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -156,7 +158,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let no_tunnel = args.no_tunnel;
     let stop_after = args.stop_after;
 
-    event::progress("starting", "Starting Quick Bridge…", 0.08);
+    event::progress("starting", i18n::t("starting"), 0.08);
 
     let prepared = match args.mode {
         Mode::Upload => {
@@ -165,24 +167,28 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
         Mode::Download => {
             if args.clipboard && args.file.is_some() {
-                bail!("use --file or --clipboard, not both");
+                bail!("{}", i18n::t("not_both"));
             }
             let share = if args.clipboard {
-                event::progress("starting", "Reading the clipboard…", 0.18);
+                event::progress("starting", i18n::t("reading_clipboard"), 0.18);
                 share::capture_clipboard(max_bytes)?
             } else if let Some(path) = args.file {
                 share::open_file(path, max_bytes, args.ephemeral)?
             } else {
-                bail!("download mode needs --file or --clipboard");
+                bail!("{}", i18n::t("need_file_or_clip"));
             };
             Prepared::Download { share }
         }
         Mode::Proxy => {
-            let target = args.port.context("proxy mode needs --port")?;
+            let target = args.port.context(i18n::t("need_port"))?;
             if target == 0 {
-                bail!("invalid port");
+                bail!("{}", i18n::t("invalid_port"));
             }
-            event::progress("starting", format!("Checking localhost:{target}…"), 0.16);
+            event::progress(
+                "starting",
+                i18n::fmt("checking_port", &[("port", &target.to_string())]),
+                0.16,
+            );
             let target = ports::confirm_local_http(target).await?;
             Prepared::Proxy { target }
         }
@@ -190,16 +196,16 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .context("could not bind local server")?;
+        .context(i18n::t("bind_failed"))?;
     let port = listener.local_addr()?.port();
     if let Prepared::Proxy { target } = &prepared {
         if target.port() == port {
-            bail!("refusing to proxy the helper's own port");
+            bail!("{}", i18n::t("own_port"));
         }
     }
 
     let (origin, location, tunnel) = if no_tunnel {
-        event::progress("starting", "Listening on localhost…", 0.55);
+        event::progress("starting", i18n::t("listening_local"), 0.55);
         (
             public_url::local_origin(&format!("http://127.0.0.1:{port}"), port)?,
             "local".to_string(),
@@ -313,12 +319,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
             Err(_) => tracing::warn!("tunnel shutdown timed out; exiting helper"),
         }
     }
-    serve_result.context("bridge server stopped")?;
+    serve_result.context(i18n::t("server_stopped"))?;
     Ok(())
 }
 
 fn qr_ready(url: &str) -> Result<Vec<String>> {
-    event::progress("starting", "Preparing the QR code…", 0.96);
+    event::progress("starting", i18n::t("preparing_qr"), 0.96);
     qr::matrix_for(url)
 }
 
@@ -414,7 +420,7 @@ async fn idle_watch(last: Arc<Mutex<Instant>>, idle: Duration) {
         if elapsed >= idle {
             event::status(
                 "idle-timeout",
-                Some("Stopped after idle timeout".to_string()),
+                Some(i18n::t("idle_timeout").to_string()),
             );
             break;
         }
@@ -427,12 +433,12 @@ async fn wall_watch(started: Instant, wall: Duration) {
     tokio::time::sleep(wall.saturating_sub(elapsed)).await;
     event::status(
         "session-timeout",
-        Some("Stopped after session time limit".to_string()),
+        Some(i18n::t("session_timeout").to_string()),
     );
 }
 
 async fn open_tunnel(port: u16) -> Result<QuickTunnelHandle> {
-    event::progress("connecting", "Requesting a Cloudflare tunnel…", 0.22);
+    event::progress("connecting", i18n::t("tunnel_request"), 0.22);
 
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
     let ticker = tokio::spawn(async move {
@@ -440,17 +446,17 @@ async fn open_tunnel(port: u16) -> Result<QuickTunnelHandle> {
             (
                 Duration::from_millis(700),
                 0.34,
-                "Finding a Cloudflare edge…",
+                i18n::t("tunnel_edge"),
             ),
             (
                 Duration::from_millis(900),
                 0.46,
-                "Handshaking with the edge…",
+                i18n::t("tunnel_handshake"),
             ),
             (
                 Duration::from_millis(1100),
                 0.56,
-                "Registering this computer…",
+                i18n::t("tunnel_register"),
             ),
         ];
         for (delay, value, message) in steps {
@@ -467,7 +473,7 @@ async fn open_tunnel(port: u16) -> Result<QuickTunnelHandle> {
                 _ = tokio::time::sleep(Duration::from_millis(750)) => {}
             }
             value = (value + 0.012).min(0.68);
-            event::progress("connecting", "Waiting on Cloudflare…", value);
+            event::progress("connecting", i18n::t("tunnel_wait"), value);
         }
     });
 
@@ -476,7 +482,7 @@ async fn open_tunnel(port: u16) -> Result<QuickTunnelHandle> {
         .with_ha_connections(1)
         .start()
         .await
-        .context("could not open a Cloudflare quick tunnel");
+        .context(i18n::t("tunnel_fail"));
     let _ = stop_tx.send(());
     let _ = ticker.await;
     result
