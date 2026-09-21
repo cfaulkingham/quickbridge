@@ -96,11 +96,35 @@ may still misbehave through the tunnel. WebSockets are not proxied.
 omarchy bar move io.github.cfaulkingham.quickbridge --section right
 ```
 
-Widget settings (save folder, max file size, idle timeout, default stop-after)
-live on the plugin entry in `~/.config/omarchy/shell.json`. The save folder
-must be under your home directory (or your XDG Downloads folder). Per-file
-size is 1–2048 MB; an upload session also stops after 32 files or eight times
-the per-file cap.
+Widget settings (save folder, max file size, idle timeout, default stop-after,
+language) live on the plugin entry in `~/.config/omarchy/shell.json`. The
+save folder must be under your home directory (or your XDG Downloads folder).
+Per-file size is 1–2048 MB; an upload session also stops after 32 files or
+eight times the per-file cap.
+
+## Languages
+
+The panel, the phone pages, and the helper messages follow the desktop
+locale. `system` is the default. Force one with:
+
+```sh
+omarchy bar set io.github.cfaulkingham.quickbridge language es
+```
+
+| Setting | Language |
+| --- | --- |
+| `en` | English |
+| `es` | Spanish |
+| `fr` | French |
+| `de` | German |
+| `zh` | Mandarin (Simplified) |
+| `ja` | Japanese |
+| `ko` | Korean |
+| `hi` | Hindi |
+| `system` | Desktop locale, English if that language is not listed |
+
+Japanese, Korean, and Mandarin use the Noto Sans CJK fonts. Hindi uses
+Noto Sans Devanagari. Those fonts ship with Omarchy.
 
 ## Security
 
