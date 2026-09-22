@@ -23,13 +23,6 @@ assert.strictEqual(
 )
 assert.strictEqual(Model.allowedUrl("https://evil.com/", "proxy"), "")
 assert.strictEqual(Model.allowedUrl("https://abc.trycloudflare.com/s/nope/", "upload"), "")
-const lanUrl = "http://desk.local:47821/s/0123456789abcdef0123456789abcdef/"
-assert.strictEqual(Model.allowedUrl(lanUrl, "upload"), lanUrl)
-assert.strictEqual(Model.allowedUrl(lanUrl, "download"), lanUrl)
-assert.strictEqual(Model.allowedUrl(lanUrl, "proxy"), "")
-assert.strictEqual(Model.allowedUrl("http://evil.com.local:47821/s/0123456789abcdef0123456789abcdef/", "upload"), "")
-assert.strictEqual(Model.allowedUrl("http://desk.local:080/s/0123456789abcdef0123456789abcdef/", "upload"), "")
-assert.strictEqual(Model.allowedUrl("http://user@desk.local:47821/s/0123456789abcdef0123456789abcdef/", "upload"), "")
 
 assert.strictEqual(Model.fileArg("/home/colin/photo.jpg"), "/home/colin/photo.jpg")
 assert.strictEqual(Model.fileArg("/home/colin/../.ssh/id_rsa"), "")

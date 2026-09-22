@@ -32,14 +32,6 @@ This plugin needs a Rust toolchain (`cargo` on `PATH`, including
 `~/.cargo/bin`) the first time the helper is compiled, and network access to
 crates.io for that build plus Cloudflare’s quick-tunnel edge at runtime.
 
-Without Rust, upload and download can still run on this computer’s network
-name. Turn the session on, then choose **Use this network**. A terminal asks
-for permission to allow one TCP port on the current network interface. The
-phone must be on the same Wi-Fi and opens `http://<hostname>.local:<port>/`.
-That session is plain HTTP, always asks for the 6-digit code, and does not
-include proxy. The firewall rule is removed when the session stops. Closing
-the terminal removes it too. Proxy still needs the Rust helper.
-
 ```sh
 omarchy plugin add https://github.com/cfaulkingham/quickbridge.git --enable
 ```
@@ -151,17 +143,6 @@ Do not proxy admin UIs, databases, or anything that trusts LAN traffic.
 Do not leave a live session unattended on an untrusted network. Treat the
 link like a capability: it is copied on stdin to `wl-copy`, never in argv.
 
-A local session (no Rust toolchain) listens on this computer’s network name
-over plain HTTP. The path token and the 6-digit code are both required.
-Omarchy’s firewall otherwise denies incoming traffic, so the session allows
-one high TCP port on the interface that carries the default route, and only
-while the terminal window stays open. Anyone on that network who can see the
-traffic can read the token and the code. Do not use it on a network you do
-not trust. If the machine loses power before the window can remove the rule,
-`sudo ufw status` may still show `quickbridge-<port>`. Remove that rule with
-the `sudo ufw delete …` line the terminal prints if it could not close the
-port itself.
-
 ## Remove
 
 ```sh
@@ -179,16 +160,11 @@ These are **not** deleted and survive removal:
   `~/.cache/quickbridge`), including the compiled binary and Cargo target dir
 - Clipboard snapshots left in `$XDG_RUNTIME_DIR/quickbridge` if a session is
   killed before the helper unlinks them (cleared on logout)
-- A firewall rule `quickbridge-<port>` if a local session was killed before
-  its terminal window could run `ufw delete`
 
 ## Dependencies
 
-- Rust/`cargo` (first run, or whenever the helper source changes). Upload
-  and download can instead use a local session, which needs `/usr/bin/python3`
-  (already on Omarchy), Avahi for `<hostname>.local`, and `ufw`
+- Rust/`cargo` (first run, or whenever the helper source changes)
 - Network access to crates.io (first compile) and Cloudflare’s quick-tunnel edge
-  for the Rust helper. A local session stays on the LAN and does not use either
 - `setpriv` and `setsid` (util-linux, already on Omarchy)
 - `wl-copy` / `wl-paste` for the link and clipboard sharing
 - `omarchy-file-select` for the download file picker

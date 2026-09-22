@@ -19,8 +19,6 @@ Panel {
   property bool expectedStop: false
   property bool stopAfter: false
   property bool requirePassword: false
-  property bool offerLocal: false
-  property bool useLocal: false
   property string sessionPassword: ""
   property string url: ""
   property string dest: ""
@@ -286,20 +284,10 @@ Panel {
     if (mode === "" || root.busy) return
     root.mode = mode
     root.lastError = ""
-    root.offerLocal = false
     if (mode === "proxy") {
-      root.useLocal = false
       root.requirePassword = true
       root.listPorts()
     }
-  }
-
-  function startLocal() {
-    if (root.mode === "proxy" || root.busy) return
-    root.useLocal = true
-    root.requirePassword = true
-    root.offerLocal = false
-    root.startSession()
   }
 
   function helperPrefix() {
@@ -314,7 +302,6 @@ Panel {
   function helperCommand() {
     var cmd = root.helperPrefix()
     cmd.push("serve")
-    if (root.useLocal && root.mode !== "proxy") cmd.push("--local")
     cmd.push("--mode")
     cmd.push(root.mode)
     cmd.push("--max-bytes")
@@ -485,7 +472,6 @@ Panel {
       return
     }
     if (ev.event === "error") {
-      root.offerLocal = ev.code === "need_cargo" && root.mode !== "proxy"
       root.lastError = Model.plain(ev.message, Model.MAX_MESSAGE) || root.t("error.failed")
       root.ready = false
       if (root.statusState === "building") {
@@ -1031,27 +1017,6 @@ Panel {
           wrapMode: Text.WordWrap
         }
 
-        Button {
-          visible: root.offerLocal && !root.showingQr && !root.sessionOn
-          width: parent.width
-          text: root.t("local.use")
-          bordered: true
-          foreground: root.contentForeground
-          fontFamily: root.uiFont
-          onClicked: root.startLocal()
-        }
-
-        Text {
-          visible: root.offerLocal && !root.showingQr && !root.sessionOn
-          width: parent.width
-          text: root.t("local.hint")
-          textFormat: Text.PlainText
-          color: root.dim
-          font.family: root.uiFont
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
-
         Item {
           id: progressBar
           visible: !root.showingQr && (root.inProgress || root.lastError !== "")
@@ -1327,9 +1292,9 @@ Panel {
         Text {
           visible: root.showingQr
           width: parent.width
-          text: root.location === "local"
-            ? root.t("qr.local")
-            : (root.mode === "proxy" ? root.t("qr.proxy_warning") : root.t("qr.retry"))
+          text: root.mode === "proxy"
+            ? root.t("qr.proxy_warning")
+            : root.t("qr.retry")
           textFormat: Text.PlainText
           color: root.dim
           font.family: root.uiFont
@@ -1431,7 +1396,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: (root.showingQr && root.location === "local") ? root.t("local.credit") : root.t("powered")
+          text: root.t("powered")
           textFormat: Text.PlainText
           color: root.dim
           font.family: root.uiFont
@@ -1440,17 +1405,12 @@ Panel {
 
           MouseArea {
             anchors.fill: parent
-            hoverEnabled: !(root.showingQr && root.location === "local")
-            cursorShape: (root.showingQr && root.location === "local")
-              ? Qt.ArrowCursor
-              : Qt.PointingHandCursor
-            onClicked: {
-              if (root.showingQr && root.location === "local") return
-              root.openCloudflareQuickTunnels()
-            }
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.openCloudflareQuickTunnels()
 
             PanelToolTip {
-              visible: parent.containsMouse && !(root.showingQr && root.location === "local")
+              visible: parent.containsMouse
               text: root.t("powered.tip")
               fontFamily: root.uiFont
             }

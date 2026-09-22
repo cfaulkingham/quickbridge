@@ -300,60 +300,6 @@ qb_msg() {
     clip_store:ko) printf '%s' '클립보드를 저장하지 못했습니다' ;;
     clip_store:*) printf '%s' 'could not store clipboard' ;;
 
-    need_python:es) printf '%s' 'Se necesita Python 3 para una sesión en la red local.' ;;
-    need_python:fr) printf '%s' 'Python 3 est requis pour une session sur le réseau local.' ;;
-    need_python:de) printf '%s' 'Python 3 wird für eine Sitzung im lokalen Netzwerk benötigt.' ;;
-    need_python:zh) printf '%s' '本地网络会话需要 Python 3。' ;;
-    need_python:hi) printf '%s' 'स्थानीय नेटवर्क सत्र के लिए Python 3 चाहिए।' ;;
-    need_python:ja) printf '%s' 'ローカルネットワークのセッションには Python 3 が必要です。' ;;
-    need_python:ko) printf '%s' '로컬 네트워크 세션에는 Python 3 가 필요합니다.' ;;
-    need_python:*) printf '%s' 'Python 3 is required for a session on the local network.' ;;
-
-    lan_intro:es) printf 'Quick Bridge permitirá el puerto TCP %s en %s para que un teléfono en esta Wi-Fi abra este equipo por su nombre.\nEl puerto se cierra al detener la sesión. Cerrar esta ventana también lo cierra.\n' "$3" "$2" ;;
-    lan_intro:fr) printf 'Quick Bridge va autoriser le port TCP %s sur %s pour qu'\''un téléphone sur ce Wi-Fi ouvre cet ordinateur par son nom.\nLe port se ferme à l'\''arrêt de la session. Fermer cette fenêtre le ferme aussi.\n' "$3" "$2" ;;
-    lan_intro:de) printf 'Quick Bridge gibt TCP-Port %s auf %s frei, damit ein Telefon in diesem WLAN diesen Computer über seinen Namen öffnet.\nDer Port schließt sich beim Beenden der Sitzung. Dieses Fenster zu schließen schließt ihn ebenfalls.\n' "$3" "$2" ;;
-    lan_intro:zh) printf 'Quick Bridge 将允许 %s 上的 TCP 端口 %s，以便同一 Wi-Fi 上的手机通过名称打开这台电脑。\n会话停止时端口会关闭。关闭此窗口也会关闭它。\n' "$2" "$3" ;;
-    lan_intro:hi) printf 'Quick Bridge %s पर TCP पोर्ट %s खोलेगा, ताकि इस Wi-Fi पर कोई फ़ोन इस कंप्यूटर को उसके नाम से खोल सके।\nसत्र रुकने पर पोर्ट बंद हो जाता है। यह विंडो बंद करने से भी वह बंद होता है।\n' "$2" "$3" ;;
-    lan_intro:ja) printf 'Quick Bridge は %s の TCP ポート %s を許可します。同じ Wi-Fi のスマホが、このパソコンを名前で開けるようにするためです。\nセッションを止めるとポートは閉じます。このウィンドウを閉じても閉じます。\n' "$2" "$3" ;;
-    lan_intro:ko) printf 'Quick Bridge 가 %s 의 TCP 포트 %s 를 허용합니다. 같은 Wi-Fi 의 휴대전화가 이 컴퓨터를 이름으로 열 수 있게 합니다.\n세션이 멈추면 포트가 닫힙니다. 이 창을 닫아도 닫힙니다.\n' "$2" "$3" ;;
-    lan_intro:*) printf 'Quick Bridge will allow TCP port %s on %s so a phone on this Wi-Fi can open this computer by name.\nThe port closes when the session stops. Closing this window closes it too.\n' "$3" "$2" ;;
-
-    lan_open:es) printf 'El puerto %s está abierto. Deja esta ventana abierta hasta que Quick Bridge se detenga.\n' "$2" ;;
-    lan_open:fr) printf 'Le port %s est ouvert. Laissez cette fenêtre ouverte jusqu'\''à l'\''arrêt de Quick Bridge.\n' "$2" ;;
-    lan_open:de) printf 'Port %s ist offen. Lass dieses Fenster offen, bis Quick Bridge stoppt.\n' "$2" ;;
-    lan_open:zh) printf '端口 %s 已开放。请保持此窗口打开，直到 Quick Bridge 停止。\n' "$2" ;;
-    lan_open:hi) printf 'पोर्ट %s खुला है। Quick Bridge रुकने तक यह विंडो खुली रखें।\n' "$2" ;;
-    lan_open:ja) printf 'ポート %s を開きました。Quick Bridge が止まるまで、このウィンドウは開いたままにしてください。\n' "$2" ;;
-    lan_open:ko) printf '포트 %s 가 열렸습니다. Quick Bridge 가 멈출 때까지 이 창을 열어 두세요.\n' "$2" ;;
-    lan_open:*) printf 'Port %s is open. Leave this window open until Quick Bridge stops.\n' "$2" ;;
-
-    lan_closed:es) printf '%s\n' 'Puerto cerrado.' ;;
-    lan_closed:fr) printf '%s\n' 'Port fermé.' ;;
-    lan_closed:de) printf '%s\n' 'Port geschlossen.' ;;
-    lan_closed:zh) printf '%s\n' '端口已关闭。' ;;
-    lan_closed:hi) printf '%s\n' 'पोर्ट बंद हो गया।' ;;
-    lan_closed:ja) printf '%s\n' 'ポートを閉じました。' ;;
-    lan_closed:ko) printf '%s\n' '포트를 닫았습니다.' ;;
-    lan_closed:*) printf '%s\n' 'Port closed.' ;;
-
-    lan_stuck:es) printf '%s\n' 'El puerto puede seguir abierto. Para cerrarlo:' ;;
-    lan_stuck:fr) printf '%s\n' 'Le port est peut-être encore ouvert. Pour le fermer :' ;;
-    lan_stuck:de) printf '%s\n' 'Der Port ist möglicherweise noch offen. So schließt du ihn:' ;;
-    lan_stuck:zh) printf '%s\n' '端口可能仍开着。要关闭它：' ;;
-    lan_stuck:hi) printf '%s\n' 'पोर्ट अभी भी खुला हो सकता है। उसे बंद करने के लिए:' ;;
-    lan_stuck:ja) printf '%s\n' 'ポートがまだ開いている可能性があります。閉じるには:' ;;
-    lan_stuck:ko) printf '%s\n' '포트가 아직 열려 있을 수 있습니다. 닫으려면:' ;;
-    lan_stuck:*) printf '%s\n' 'The port may still be open. To close it:' ;;
-
-    lan_allow_failed:es) printf '%s\n' 'No se pudo permitir el puerto.' ;;
-    lan_allow_failed:fr) printf '%s\n' 'Impossible d'\''autoriser le port.' ;;
-    lan_allow_failed:de) printf '%s\n' 'Der Port konnte nicht freigegeben werden.' ;;
-    lan_allow_failed:zh) printf '%s\n' '无法允许该端口。' ;;
-    lan_allow_failed:hi) printf '%s\n' 'पोर्ट की अनुमति नहीं दी जा सकी।' ;;
-    lan_allow_failed:ja) printf '%s\n' 'ポートを許可できませんでした。' ;;
-    lan_allow_failed:ko) printf '%s\n' '포트를 허용하지 못했습니다.' ;;
-    lan_allow_failed:*) printf '%s\n' 'Could not allow the port.' ;;
-
     *) printf '%s' "$key" ;;
   esac
 }

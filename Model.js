@@ -62,12 +62,8 @@ function allowedUrl(value, mode) {
       return url.replace(/\/$/, "") + "/"
     return ""
   }
-  if (/^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.trycloudflare\.com\/s\/[a-f0-9]{32}\/$/.test(url))
-    return url
-  var lan = /^http:\/\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.local:([0-9]{1,5})\/s\/[a-f0-9]{32}\/$/.exec(url)
-  if (!lan) return ""
-  var port = parseInt(lan[2], 10)
-  if (port < 1 || port > 65535 || String(port) !== lan[2]) return ""
+  if (!/^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.trycloudflare\.com\/s\/[a-f0-9]{32}\/$/.test(url))
+    return ""
   return url
 }
 

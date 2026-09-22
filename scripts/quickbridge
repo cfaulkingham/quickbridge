@@ -42,18 +42,6 @@ die() {
   exit 1
 }
 
-die_code() {
-  local code=$1
-  local msg
-  case $code in
-    need_cargo|need_python) ;;
-    *) code=error ;;
-  esac
-  msg=$(json_escape "$2")
-  emit "{\"event\":\"error\",\"code\":\"$code\",\"message\":\"$msg\"}"
-  exit 1
-}
-
 # Last cargo phase line from the capped build log. Empty until cargo prints.
 last_build_line() {
   local log=$1
@@ -132,48 +120,16 @@ install_bin() {
   trap - RETURN
 }
 
-want_local=0
-mode=""
-args=()
-prev=""
-for arg in "$@"; do
-  if [[ $prev == --mode ]]; then
-    case $arg in
-      upload|download|proxy) mode=$arg ;;
-    esac
-    prev=""
-    args+=("$arg")
-    continue
-  fi
-  case $arg in
-    --local) want_local=1 ;;
-    --mode) prev=--mode; args+=("$arg") ;;
-    --mode=upload|--mode=download|--mode=proxy)
-      mode=${arg#--mode=}
-      args+=("$arg")
-      ;;
-    *) args+=("$arg") ;;
-  esac
-done
-
-run_local() {
-  [[ -x /usr/bin/python3 ]] || die_code need_python "$(qb_msg need_python)"
-  export PYTHONUNBUFFERED=1
-  exec /usr/bin/python3 -I -S "$ROOT/scripts/local_session.py" "${args[@]}"
-}
-
 if src_newer_than_bin; then
+  emit_status building "$(qb_msg building)" 0.08
   CARGO=""
   if [[ -x /usr/bin/cargo ]]; then
     CARGO=/usr/bin/cargo
   elif [[ -x "$HOME/.cargo/bin/cargo" ]]; then
     CARGO="$HOME/.cargo/bin/cargo"
-  elif [[ $want_local == 1 && ( $mode == upload || $mode == download ) ]]; then
-    run_local
   else
-    die_code need_cargo "$(qb_msg need_cargo)"
+    die "$(qb_msg need_cargo)"
   fi
-  emit_status building "$(qb_msg building)" 0.08
   private_dir "$CACHE"
   export CARGO_TARGET_DIR="$CACHE/target"
   BUILD_LOG=$(/usr/bin/mktemp -p "$CACHE" .build.XXXXXXXXXX) || die "$(qb_msg mktemp)"
@@ -230,4 +186,4 @@ if [[ -L "$BIN" ]]; then
   die "$(qb_msg bin_symlink)"
 fi
 unset LD_PRELOAD _STDBUF_O _STDBUF_E _STDBUF_I
-exec "$BIN" "${args[@]}"
+exec "$BIN" "$@"

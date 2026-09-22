@@ -2,5 +2,3 @@
 /bin
 .quickbridge-*
 *.part
-__pycache__/
-*.pyc
